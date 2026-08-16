@@ -252,10 +252,19 @@ h3 {
   color: var(--ink);
 }
 
-.focus-card.compact .portrait {
+.card-token {
+  display: block;
   width: 48px;
   height: 48px;
-  border-radius: 10px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 2px solid var(--brass);
+}
+
+.focus-card.compact .card-token {
+  width: 44px;
+  height: 44px;
 }
 
 .focus-head {
@@ -602,6 +611,7 @@ h3 {
   min-height: var(--tap);
   display: flex;
   align-items: center;
+  gap: 8px;
   padding: 4px 8px;
   border: 1px dashed var(--line);
   border-radius: 12px;
@@ -631,11 +641,29 @@ body.is-card-dragging .encounter-roster {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   background: #4a3724;
   border-radius: 999px;
-  padding: 0 4px 0 12px;
+  padding: 2px 4px 2px 2px;
   white-space: nowrap;
+}
+
+.encounter-chip .card-token {
+  width: 28px;
+  height: 28px;
+  border-width: 1px;
+}
+
+.encounter-map-chip {
+  padding-left: 2px;
+}
+
+.encounter-map-thumb {
+  width: 36px;
+  height: 24px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--line);
 }
 
 .encounter-chip .tiny {
@@ -722,38 +750,75 @@ body.is-card-dragging .encounter-roster {
   transform-origin: 0 0;
   will-change: transform;
   user-select: none;
+  background-color: #2a241c;
 }
 
-.grid-scale {
+.board.is-bare {
+  background-color: #c8c4bb;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='d' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.55  0 0 0 0 0.50  0 0 0 0 0.42  0 0 0 0.28 0'/%3E%3C/filter%3E%3Crect width='256' height='256' fill='%23c8c4bb'/%3E%3Crect width='256' height='256' filter='url(%23d)'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+}
+
+.board-scales {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.board-scales.compact {
   position: absolute;
   left: 12px;
   bottom: 12px;
   z-index: 2;
-  width: 132px;
+  margin: 0;
+  width: 168px;
+}
+
+.grid-scale {
+  display: grid;
+  gap: 4px;
   margin: 0;
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: 14px;
   background: rgb(11 9 7 / 0.55);
+}
+
+.board-scales.compact .grid-scale {
   opacity: 0.4;
 }
 
-.grid-scale:hover,
-.grid-scale:focus-within {
+.board-scales.compact:hover .grid-scale,
+.board-scales.compact:focus-within .grid-scale {
   opacity: 1;
 }
 
-.grid-scale input {
+.grid-scale span,
+.grid-scale-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.grid-scale input[type="range"] {
   width: 100%;
   min-height: 22px;
   margin: 0;
+}
+
+.grid-scale input[type="range"]:disabled {
+  opacity: 0.35;
 }
 
 .grid {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(to right, rgba(243, 234, 216, 0.12) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(243, 234, 216, 0.12) 1px, transparent 1px);
+    linear-gradient(to right, transparent 1px, #000 1px, #000 3px, transparent 3px),
+    linear-gradient(to bottom, transparent 1px, #000 1px, #000 3px, transparent 3px),
+    linear-gradient(to right, #fff 4px, transparent 4px),
+    linear-gradient(to bottom, #fff 4px, transparent 4px);
   pointer-events: none;
 }
 
@@ -779,8 +844,11 @@ body.is-card-dragging .encounter-roster {
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: 50%;
-  border: 2px solid #f3ead8;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  border: 2px solid #111;
+  box-shadow:
+    0 0 0 2px #f7f3ea,
+    0 0 0 4px #111,
+    0 3px 8px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
 
@@ -800,7 +868,21 @@ body.is-card-dragging .encounter-roster {
   height: 28px;
   object-fit: cover;
   border-radius: 50%;
-  border: 1px solid var(--line);
+  border: 2px solid #111;
+  box-shadow: 0 0 0 1px #f7f3ea, 0 0 0 2px #111;
+}
+
+.token-row-handle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  touch-action: none;
 }
 
 .token-grab {

@@ -16,6 +16,7 @@ import {
 import { CardPdfReader } from "./CardPdfReader";
 import { CardUrlFrame } from "./CardUrlFrame";
 import { TokenGrabModal } from "./TokenGrabModal";
+import { cardImageUrl } from "../lib/defaultToken";
 
 export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
   const { store, snap } = useHost();
@@ -23,7 +24,6 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
   const tracks = tracksFrom(entity.runCard);
   const secrets = secretsFrom(entity.runCard);
   const text = textFrom(entity.runCard);
-  const portrait = mediaFrom(entity.runCard, "portrait");
   const tokenArt = mediaFrom(entity.runCard, "token");
   const pictures = mediaBlocksFrom(entity.runCard).filter((block) => block.role !== "token");
   const original = cardOriginal(entity, snap.sources);
@@ -31,9 +31,7 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
   const [secretOpen, setSecretOpen] = useState(revealSecrets);
   const [titleDraft, setTitleDraft] = useState(entity.runCard.title);
   const [grabbing, setGrabbing] = useState(false);
-  const portraitUrl = portrait ? snap.mediaUrls[portrait.mediaId] : undefined;
-  const firstPicture = pictures[0];
-  const thumbUrl = portraitUrl ?? (firstPicture ? snap.mediaUrls[firstPicture.mediaId] : undefined);
+  const tokenUrl = cardImageUrl(entity, snap.mediaUrls);
   const showsOriginal = original.kind === "pdf" || original.kind === "url";
   const focused = snap.focus?.id === entity.id;
   const drag = useCardEncounterDrag(entity.id, entity.runCard.title);
@@ -65,7 +63,7 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
           setExpanded((open) => !open);
         }}
       >
-        {thumbUrl ? <img className="portrait" src={thumbUrl} alt="" /> : null}
+        {tokenUrl ? <img className="card-token" src={tokenUrl} alt="" /> : null}
         <div>
           <p className="eyebrow">
             {entity.runCard.tags.join(" · ") || "entity"} · {entity.lifecycle}

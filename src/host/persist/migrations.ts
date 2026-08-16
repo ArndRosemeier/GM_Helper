@@ -37,6 +37,27 @@ export const SCHEMA_MIGRATIONS: ReadonlyArray<SchemaMigration> = [
       "First versioned schema. Unversioned IndexedDB is 0. Normalize scene.description, source files, settings, and stamp schemaVersion.",
     apply: migrate0to1,
   },
+  {
+    from: 1,
+    to: 2,
+    reason:
+      "Battleground token size is independent of the grid. gridSize null now hides the grid instead of meaning default.",
+    apply: migrate1to2,
+  },
+  {
+    from: 2,
+    to: 3,
+    reason:
+      "Encounter keeps its own map. A live encounter without a dropped map uses the neutral board, not the scene map.",
+    apply: migrate2to3,
+  },
+  {
+    from: 3,
+    to: 4,
+    reason:
+      "A live encounter owns its own tokens, one per roster entry. Scene leftovers are not reused as extras.",
+    apply: migrate3to4,
+  },
 ];
 
 export function assertMigrationChain(
@@ -120,6 +141,45 @@ async function migrate0to1(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
     const next = readSettings(settings, warnings);
     if (next) {
       await db.put("settings", next, "app");
+    }
+  }
+  return warnings;
+}
+
+async function migrate1to2(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("scenes")) {
+    const next = readScene(raw, warnings);
+    if (next) {
+      await db.put("scenes", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate2to3(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (next) {
+      await db.put("encounters", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate3to4(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("scenes")) {
+    const next = readScene(raw, warnings);
+    if (next) {
+      await db.put("scenes", next);
+    }
+  }
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (next) {
+      await db.put("encounters", next);
     }
   }
   return warnings;

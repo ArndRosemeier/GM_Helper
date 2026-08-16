@@ -65,7 +65,7 @@ export function useCardEncounterDrag(
       document.body.classList.remove("is-card-dragging");
       clearEncounterDropHot();
       if (dropped) {
-        store.run(store.addParticipant(entityId));
+        store.run(store.dropOnEncounter(entityId));
       }
     };
 

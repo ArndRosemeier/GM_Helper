@@ -1,4 +1,4 @@
-import { mediaFrom } from "../host/runCard";
+import { mediaBlocksFrom, mediaFrom } from "../host/runCard";
 import type { Entity } from "../host/types";
 
 export function defaultTokenDataUrl(label: string, seed: string): string {
@@ -12,13 +12,25 @@ export function defaultTokenDataUrl(label: string, seed: string): string {
 }
 
 export function tokenArtUrl(entity: Entity, mediaUrls: Readonly<Record<string, string>>): string {
-  const block = mediaFrom(entity.runCard, "token");
+  return cardImageUrl(entity, mediaUrls) ?? defaultTokenDataUrl(entity.runCard.title, entity.id);
+}
+
+export function cardImageUrl(
+  entity: Entity,
+  mediaUrls: Readonly<Record<string, string>>,
+): string | null {
+  const token = mediaFrom(entity.runCard, "token");
+  const portrait = mediaFrom(entity.runCard, "portrait");
+  const extra = mediaBlocksFrom(entity.runCard).find(
+    (block) => block.role !== "token" && block.role !== "portrait",
+  );
+  const block = token ?? portrait ?? extra ?? null;
   if (!block) {
-    return defaultTokenDataUrl(entity.runCard.title, entity.id);
+    return null;
   }
   const url = mediaUrls[block.mediaId];
   if (!url) {
-    throw new Error(`Token image for “${entity.runCard.title}” is in the card but not loaded`);
+    throw new Error(`Image for “${entity.runCard.title}” is in the card but not loaded`);
   }
   return url;
 }

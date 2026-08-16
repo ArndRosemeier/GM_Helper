@@ -125,6 +125,7 @@ export type Session = {
 export type BattlegroundToken = {
   id: TokenId;
   entityId: EntityId;
+  participantId: ParticipantId | null;
   x: number;
   y: number;
   visible: boolean;
@@ -134,12 +135,23 @@ export type BattlegroundToken = {
 export type Battleground = {
   mapMediaId: MediaId | null;
   tokens: ReadonlyArray<BattlegroundToken>;
+  /** Cell size in CSS pixels. `null` hides the grid. */
   gridSize: number | null;
+  tokenSize: number;
 };
 
 export const GRID_SIZE_MIN = 16;
 export const GRID_SIZE_MAX = 128;
 export const GRID_SIZE_DEFAULT = 48;
+
+export function emptyBattleground(): Battleground {
+  return {
+    mapMediaId: null,
+    tokens: [],
+    gridSize: GRID_SIZE_DEFAULT,
+    tokenSize: GRID_SIZE_DEFAULT,
+  };
+}
 
 export type Scene = {
   id: SceneId;
@@ -228,6 +240,9 @@ export type EncounterState = {
   sessionId: SessionId;
   participants: ReadonlyArray<EncounterParticipant>;
   activeIndex: number;
+  mapMediaId: MediaId | null;
+  live: boolean;
+  tokens: ReadonlyArray<BattlegroundToken>;
 };
 
 export type NowContext = {

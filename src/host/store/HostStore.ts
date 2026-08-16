@@ -26,7 +26,7 @@ import {
 import {
   nowIso,
   type AppMode,
-  GRID_SIZE_DEFAULT,
+  emptyBattleground,
   GRID_SIZE_MAX,
   GRID_SIZE_MIN,
   type BattlegroundToken,
@@ -80,6 +80,7 @@ import { createCatalog, rebuildCatalog, searchCatalog } from "../search/catalog"
 import {
   adjustTrackInCard,
   cloneTracks,
+  mediaFrom,
   newTrack,
   replaceTracks,
   tracksFrom,
@@ -435,7 +436,7 @@ export class HostStore {
       title,
       description: "",
       entityIds: [],
-      battleground: { mapMediaId: null, tokens: [], gridSize: GRID_SIZE_DEFAULT },
+      battleground: emptyBattleground(),
       order: this.scenes.filter((item) => item.sessionId === sessionId).length,
     };
     await this.requireDb().put("scenes", scene);
@@ -568,6 +569,7 @@ export class HostStore {
           ...this.encounter,
           participants,
           activeIndex: Math.min(this.encounter.activeIndex, participants.length - 1),
+          tokens: this.encounter.tokens.filter((token) => token.entityId !== id),
         });
       }
     }
@@ -1058,6 +1060,7 @@ export class HostStore {
     const token = {
       id: newTokenId(),
       entityId,
+      participantId: null,
       x: 0.35 + Math.random() * 0.3,
       y: 0.35 + Math.random() * 0.3,
       visible,
@@ -1090,6 +1093,14 @@ export class HostStore {
   }
 
   async moveToken(tokenId: TokenId, x: number, y: number): Promise<void> {
+    if (this.encounter?.live) {
+      await this.putEncounter({
+        ...this.encounter,
+        tokens: this.mapEncounterToken(this.encounter, tokenId, (token) => ({ ...token, x, y })),
+      });
+      this.emit();
+      return;
+    }
     const scene = this.requireScene(this.requireSceneId());
     await this.putScene({
       ...scene,
@@ -1103,10 +1114,10 @@ export class HostStore {
     this.emit();
   }
 
-  async setGridSize(size: number): Promise<void> {
-    if (!Number.isInteger(size) || size < GRID_SIZE_MIN || size > GRID_SIZE_MAX) {
+  async setGridSize(size: number | null): Promise<void> {
+    if (size !== null && (!Number.isInteger(size) || size < GRID_SIZE_MIN || size > GRID_SIZE_MAX)) {
       this.setErrorAndThrow(
-        `Grid scale must be an integer from ${String(GRID_SIZE_MIN)} to ${String(GRID_SIZE_MAX)}`,
+        `Grid scale must be off, or an integer from ${String(GRID_SIZE_MIN)} to ${String(GRID_SIZE_MAX)}`,
       );
     }
     const scene = this.requireScene(this.requireSceneId());
@@ -1120,7 +1131,32 @@ export class HostStore {
     this.emit();
   }
 
+  async setTokenSize(size: number): Promise<void> {
+    if (!Number.isInteger(size) || size < GRID_SIZE_MIN || size > GRID_SIZE_MAX) {
+      this.setErrorAndThrow(
+        `Token scale must be an integer from ${String(GRID_SIZE_MIN)} to ${String(GRID_SIZE_MAX)}`,
+      );
+    }
+    const scene = this.requireScene(this.requireSceneId());
+    if (scene.battleground.tokenSize === size) {
+      return;
+    }
+    await this.putScene({
+      ...scene,
+      battleground: { ...scene.battleground, tokenSize: size },
+    });
+    this.emit();
+  }
+
   async setTokenVisible(tokenId: TokenId, visible: boolean): Promise<void> {
+    if (this.encounter?.live) {
+      await this.putEncounter({
+        ...this.encounter,
+        tokens: this.mapEncounterToken(this.encounter, tokenId, (token) => ({ ...token, visible })),
+      });
+      this.emit();
+      return;
+    }
     const scene = this.requireScene(this.requireSceneId());
     await this.putScene({
       ...scene,
@@ -1142,6 +1178,9 @@ export class HostStore {
         sessionId: this.requireSessionId(),
         participants: [extra],
         activeIndex: 0,
+        mapMediaId: null,
+        live: false,
+        tokens: [],
       });
       this.emit();
       return;
@@ -1149,6 +1188,9 @@ export class HostStore {
     await this.putEncounter({
       ...existing,
       participants: [...existing.participants, extra],
+      tokens: existing.live
+        ? [...existing.tokens, this.tokenForParticipant(extra, existing.tokens.length)]
+        : existing.tokens,
     });
     this.emit();
   }
@@ -1158,8 +1200,43 @@ export class HostStore {
     if (!encounter || encounter.participants.length === 0) {
       this.setErrorAndThrow("Encounter has no one in it");
     }
-    await this.ensureEncounterTokens(encounter);
+    await this.putEncounter({
+      ...encounter,
+      live: true,
+      tokens: this.tokensFromRoster(encounter.participants),
+    });
     this.setSurface("table");
+  }
+
+  async dropOnEncounter(entityId: EntityId): Promise<void> {
+    const entity = this.requireEntity(entityId);
+    const map = mediaFrom(entity.runCard, "map");
+    if (map) {
+      await this.setEncounterMap(map.mediaId);
+      return;
+    }
+    await this.addParticipant(entityId);
+  }
+
+  async setEncounterMap(mapMediaId: MediaId | null): Promise<void> {
+    const existing = this.encounter;
+    if (!existing) {
+      await this.putEncounter({
+        sessionId: this.requireSessionId(),
+        participants: [],
+        activeIndex: 0,
+        mapMediaId,
+        live: false,
+        tokens: [],
+      });
+      this.emit();
+      return;
+    }
+    if (existing.mapMediaId === mapMediaId) {
+      return;
+    }
+    await this.putEncounter({ ...existing, mapMediaId });
+    this.emit();
   }
 
   async removeParticipant(participantId: ParticipantId): Promise<void> {
@@ -1173,6 +1250,7 @@ export class HostStore {
       ...existing,
       participants,
       activeIndex: Math.min(existing.activeIndex, participants.length - 1),
+      tokens: existing.tokens.filter((token) => token.participantId !== participantId),
     });
     this.emit();
   }
@@ -1462,49 +1540,57 @@ export class HostStore {
     };
   }
 
-  private async ensureEncounterTokens(encounter: EncounterState): Promise<void> {
-    const scene = this.requireScene(this.requireSceneId());
-    const needed = new Map<EntityId, number>();
-    for (const participant of encounter.participants) {
-      needed.set(participant.entityId, (needed.get(participant.entityId) ?? 0) + 1);
-    }
-    let visibilityChanged = false;
-    const tokens: BattlegroundToken[] = scene.battleground.tokens.map((token) => {
-      if (!needed.has(token.entityId) || token.visible) {
+  private mapEncounterToken(
+    encounter: EncounterState,
+    tokenId: TokenId,
+    update: (token: BattlegroundToken) => BattlegroundToken,
+  ): BattlegroundToken[] {
+    let found = false;
+    const tokens = encounter.tokens.map((token) => {
+      if (token.id !== tokenId) {
         return token;
       }
-      visibilityChanged = true;
-      return { ...token, visible: true };
+      found = true;
+      return update(token);
     });
-    const have = new Map<EntityId, number>();
-    for (const token of tokens) {
-      have.set(token.entityId, (have.get(token.entityId) ?? 0) + 1);
+    if (!found) {
+      this.setErrorAndThrow(`Encounter has no token ${tokenId}`);
     }
-    const extra: BattlegroundToken[] = [];
-    for (const [entityId, count] of needed) {
-      const missing = count - (have.get(entityId) ?? 0);
-      if (missing <= 0) {
-        continue;
-      }
-      const entity = this.requireEntity(entityId);
-      for (let index = 0; index < missing; index += 1) {
-        extra.push({
-          id: newTokenId(),
-          entityId,
-          x: 0.18 + (extra.length % 5) * 0.14,
-          y: 0.22 + Math.floor(extra.length / 5) * 0.16,
-          visible: true,
-          label: entity.runCard.title,
-        });
+    return tokens;
+  }
+
+  private tokensFromRoster(
+    participants: ReadonlyArray<EncounterParticipant>,
+  ): BattlegroundToken[] {
+    const scene = this.currentSceneId === null ? null : this.scenes.find((item) => item.id === this.currentSceneId);
+    const pool = new Map<EntityId, BattlegroundToken[]>();
+    if (scene) {
+      for (const token of scene.battleground.tokens) {
+        const list = pool.get(token.entityId) ?? [];
+        list.push(token);
+        pool.set(token.entityId, list);
       }
     }
-    if (extra.length === 0 && !visibilityChanged) {
-      return;
-    }
-    await this.putScene({
-      ...scene,
-      battleground: { ...scene.battleground, tokens: [...tokens, ...extra] },
+    return participants.map((participant, index) => {
+      const reused = pool.get(participant.entityId)?.shift();
+      return this.tokenForParticipant(participant, index, reused ?? null);
     });
+  }
+
+  private tokenForParticipant(
+    participant: EncounterParticipant,
+    index: number,
+    reused: BattlegroundToken | null = null,
+  ): BattlegroundToken {
+    return {
+      id: newTokenId(),
+      entityId: participant.entityId,
+      participantId: participant.id,
+      x: reused?.x ?? 0.18 + (index % 5) * 0.14,
+      y: reused?.y ?? 0.22 + Math.floor(index / 5) * 0.16,
+      visible: true,
+      label: participant.label,
+    };
   }
 
   private async insertEntity(runCard: RunCard, lifecycle: Entity["lifecycle"]): Promise<Entity> {
@@ -1625,6 +1711,17 @@ export class HostStore {
     this.currentSessionId = this.sessions[0]?.id ?? null;
     if (this.currentSessionId) {
       this.encounter = readEncounter(await db.get("encounters", this.currentSessionId), warnings);
+      if (
+        this.encounter?.live &&
+        this.encounter.tokens.length === 0 &&
+        this.encounter.participants.length > 0
+      ) {
+        this.encounter = {
+          ...this.encounter,
+          tokens: this.tokensFromRoster(this.encounter.participants),
+        };
+        await this.putEncounter(this.encounter);
+      }
       this.logEntries = readStored(
         await db.getAllFromIndex("logEntries", "sessionId", this.currentSessionId),
         readLogEntry,

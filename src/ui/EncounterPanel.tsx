@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { useHost } from "../host/HostContext";
 import type { ParticipantId, TrackId } from "../host/ids";
+import { cardImageUrl } from "../lib/defaultToken";
 
 export function EncounterAmbient() {
   const { store, snap } = useHost();
   const participants = snap.encounter?.participants ?? [];
+  const mapId = snap.encounter?.mapMediaId ?? null;
+  const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
   return (
     <div className="encounter-define">
       <div
@@ -12,12 +15,34 @@ export function EncounterAmbient() {
         data-encounter-drop="true"
         aria-label="Encounter roster"
       >
+        {mapId ? (
+          <div className="encounter-chip encounter-map-chip">
+            {mapUrl ? <img className="encounter-map-thumb" src={mapUrl} alt="" /> : null}
+            <span>Map</span>
+            <button
+              type="button"
+              className="tiny"
+              aria-label="Remove encounter map"
+              onClick={() => store.run(store.setEncounterMap(null))}
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
         {participants.length === 0 ? (
-          <p className="muted encounter-hint">Drag cards here. The same card can go in more than once.</p>
+          <p className="muted encounter-hint">
+            {mapId === null
+              ? "Drag cards here. Drop a map card to set the battleground."
+              : "Drag cards here. The same card can go in more than once."}
+          </p>
         ) : (
           <ol className="encounter-chips">
-            {participants.map((participant) => (
+            {participants.map((participant) => {
+              const owner = snap.entities.find((item) => item.id === participant.entityId);
+              const art = owner ? cardImageUrl(owner, snap.mediaUrls) : null;
+              return (
               <li key={participant.id} className="encounter-chip">
+                {art ? <img className="card-token" src={art} alt="" /> : null}
                 <span>{participant.label}</span>
                 <button
                   type="button"
@@ -28,7 +53,8 @@ export function EncounterAmbient() {
                   ×
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ol>
         )}
       </div>

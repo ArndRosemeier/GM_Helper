@@ -1,9 +1,11 @@
 import { useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { GRID_SIZE_DEFAULT, GRID_SIZE_MAX, GRID_SIZE_MIN } from "../host/types";
 import { useHost } from "../host/HostContext";
-import type { TokenId } from "../host/ids";
+import type { EntityId, TokenId } from "../host/ids";
 import { defaultTokenDataUrl, tokenArtUrl } from "../lib/defaultToken";
 import { useBoardPanZoom } from "./useBoardPanZoom";
+import { useCardEncounterDrag } from "./useCardEncounterDrag";
+import { createPortal } from "react-dom";
 
 export function TableSurface() {
   const { store, snap } = useHost();
@@ -11,10 +13,16 @@ export function TableSurface() {
   const board = useRef<HTMLDivElement>(null);
   const camera = useBoardPanZoom(viewport);
   const scene = snap.scene;
-  const mapId = scene?.battleground.mapMediaId ?? null;
+  const mapId =
+    snap.encounter?.live === true
+      ? snap.encounter.mapMediaId
+      : (scene?.battleground.mapMediaId ?? null);
   const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
-  const tokens = (scene?.battleground.tokens ?? []).filter((token) => token.visible);
-  const gridSize = scene?.battleground.gridSize ?? GRID_SIZE_DEFAULT;
+  const tokens = (
+    snap.encounter?.live === true ? snap.encounter.tokens : (scene?.battleground.tokens ?? [])
+  ).filter((token) => token.visible);
+  const gridSize = scene?.battleground.gridSize ?? null;
+  const tokenSize = scene?.battleground.tokenSize ?? GRID_SIZE_DEFAULT;
 
   const onTokenPointerDown = (event: ReactPointerEvent<HTMLButtonElement>): void => {
     event.stopPropagation();
@@ -55,16 +63,17 @@ export function TableSurface() {
       >
         <div
           ref={board}
-          className="board"
+          className={mapUrl ? "board" : "board is-bare"}
           style={{
             transform: `translate(${String(camera.view.x)}px, ${String(camera.view.y)}px) scale(${String(camera.view.scale)})`,
             backgroundImage: mapUrl ? `url(${mapUrl})` : undefined,
             backgroundSize: "cover",
             backgroundPosition: "center",
-            backgroundColor: "#2a241c",
           }}
         >
-          <div className="grid" style={{ backgroundSize: `${String(gridSize)}px ${String(gridSize)}px` }} />
+          {gridSize !== null ? (
+            <div className="grid" style={{ backgroundSize: `${String(gridSize)}px ${String(gridSize)}px` }} />
+          ) : null}
           {tokens.map((token) => {
             const owner = snap.entities.find((item) => item.id === token.entityId);
             const art = owner
@@ -78,7 +87,7 @@ export function TableSurface() {
                 style={{
                   left: `${String(token.x * 100)}%`,
                   top: `${String(token.y * 100)}%`,
-                  width: `${String(gridSize)}px`,
+                  width: `${String(tokenSize)}px`,
                 }}
                 onPointerDown={onTokenPointerDown}
                 onPointerMove={(event) => onTokenPointerMove(event, token.id)}
@@ -95,17 +104,7 @@ export function TableSurface() {
           ) : null}
         </div>
       </div>
-      <label className="grid-scale">
-        <input
-          type="range"
-          min={GRID_SIZE_MIN}
-          max={GRID_SIZE_MAX}
-          step={2}
-          value={gridSize}
-          aria-label="Grid scale"
-          onChange={(event) => store.run(store.setGridSize(Number(event.target.value)))}
-        />
-      </label>
+      {scene ? <BoardScaleControls compact /> : null}
       <button type="button" className="lift" onClick={() => store.setSurface("gm")}>
         Lift
       </button>
@@ -115,6 +114,102 @@ export function TableSurface() {
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
+}
+
+function BoardScaleControls({ compact = false }: { compact?: boolean }) {
+  const { store, snap } = useHost();
+  const scene = snap.scene;
+  if (!scene) {
+    return null;
+  }
+  const lastGrid = useRef(scene.battleground.gridSize ?? GRID_SIZE_DEFAULT);
+  if (scene.battleground.gridSize !== null) {
+    lastGrid.current = scene.battleground.gridSize;
+  }
+  const gridOn = scene.battleground.gridSize !== null;
+  const gridSize = scene.battleground.gridSize ?? lastGrid.current;
+  return (
+    <div className={compact ? "board-scales compact" : "board-scales"}>
+      <label className="grid-scale">
+        <span>Tokens</span>
+        <input
+          type="range"
+          min={GRID_SIZE_MIN}
+          max={GRID_SIZE_MAX}
+          step={2}
+          value={scene.battleground.tokenSize}
+          aria-label="Token scale"
+          onChange={(event) => store.run(store.setTokenSize(Number(event.target.value)))}
+        />
+      </label>
+      <label className="grid-scale">
+        <span className="grid-scale-toggle">
+          <input
+            type="checkbox"
+            checked={gridOn}
+            onChange={(event) =>
+              store.run(store.setGridSize(event.target.checked ? lastGrid.current : null))
+            }
+          />
+          Grid
+        </span>
+        <input
+          type="range"
+          min={GRID_SIZE_MIN}
+          max={GRID_SIZE_MAX}
+          step={2}
+          value={gridSize}
+          disabled={!gridOn}
+          aria-label="Grid scale"
+          onChange={(event) => store.run(store.setGridSize(Number(event.target.value)))}
+        />
+      </label>
+    </div>
+  );
+}
+
+function BattlegroundTokenRow({
+  entityId,
+  label,
+  visible,
+  art,
+  onToggleVisible,
+}: {
+  entityId: EntityId;
+  label: string;
+  visible: boolean;
+  art: string;
+  onToggleVisible: () => void;
+}) {
+  const drag = useCardEncounterDrag(entityId, label);
+  return (
+    <li>
+      <button
+        type="button"
+        className="token-row-handle"
+        onPointerDown={drag.onPointerDown}
+        onClick={() => {
+          if (drag.consumeClick()) {
+            return;
+          }
+        }}
+      >
+        <img className="token-art-mini" src={art} alt="" />
+        <span>{label}</span>
+      </button>
+      <button type="button" onClick={onToggleVisible}>
+        {visible ? "Hide from table" : "Show on table"}
+      </button>
+      {drag.ghost
+        ? createPortal(
+            <div className="card-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y }}>
+              {drag.ghost.title}
+            </div>,
+            document.body,
+          )
+        : null}
+    </li>
+  );
 }
 
 export function BattlegroundPrep() {
@@ -140,20 +235,23 @@ export function BattlegroundPrep() {
           Preview table
         </button>
       </div>
+      <BoardScaleControls />
       <ul className="token-list">
         {scene.battleground.tokens.map((token) => {
           const owner = snap.entities.find((item) => item.id === token.entityId);
-          const art = owner
-            ? tokenArtUrl(owner, snap.mediaUrls)
-            : defaultTokenDataUrl(token.label, token.entityId);
           return (
-            <li key={token.id}>
-              <img className="token-art-mini" src={art} alt="" />
-              <span>{token.label}</span>
-              <button type="button" onClick={() => store.run(store.setTokenVisible(token.id, !token.visible))}>
-                {token.visible ? "Hide from table" : "Show on table"}
-              </button>
-            </li>
+            <BattlegroundTokenRow
+              key={token.id}
+              entityId={token.entityId}
+              label={token.label}
+              visible={token.visible}
+              art={
+                owner
+                  ? tokenArtUrl(owner, snap.mediaUrls)
+                  : defaultTokenDataUrl(token.label, token.entityId)
+              }
+              onToggleVisible={() => store.run(store.setTokenVisible(token.id, !token.visible))}
+            />
           );
         })}
       </ul>

@@ -14,6 +14,7 @@ import {
 } from "../ids";
 import { parseAppSettings, type AppSettings } from "../settings";
 import {
+  emptyBattleground,
   GRID_SIZE_DEFAULT,
   GRID_SIZE_MAX,
   GRID_SIZE_MIN,
@@ -274,10 +275,14 @@ export function readEncounter(value: unknown, warnings: MigrationWarning[]): Enc
   const activeIndex = record.activeIndex;
   const participants = readParticipants(record.participants, sessionId, warnings);
   const index = typeof activeIndex === "number" && Number.isInteger(activeIndex) ? activeIndex : 0;
+  const mapMediaId = record.mapMediaId;
   return {
     sessionId: asSessionId(sessionId),
     participants,
     activeIndex: participants.length === 0 ? 0 : Math.min(Math.max(0, index), participants.length - 1),
+    mapMediaId: typeof mapMediaId === "string" ? asMediaId(mapMediaId) : null,
+    live: record.live === true,
+    tokens: readTokens(record.tokens, sessionId, warnings, "encounters"),
   };
 }
 
@@ -469,53 +474,85 @@ function readPinnedFacts(value: unknown, campaignId: string, warnings: Migration
 
 function readBattleground(value: unknown, sceneId: string, warnings: MigrationWarning[]): Battleground {
   if (value === undefined) {
-    return { mapMediaId: null, tokens: [], gridSize: GRID_SIZE_DEFAULT };
+    return emptyBattleground();
   }
   const record = asObject(value, "scenes", sceneId, warnings);
   if (!record) {
-    return { mapMediaId: null, tokens: [], gridSize: GRID_SIZE_DEFAULT };
+    return emptyBattleground();
   }
   const mapMediaId = record.mapMediaId;
-  const gridSize = record.gridSize;
-  let size: number | null = GRID_SIZE_DEFAULT;
-  if (gridSize === null || gridSize === undefined) {
-    size = GRID_SIZE_DEFAULT;
-  } else if (typeof gridSize === "number" && Number.isInteger(gridSize)) {
-    size = Math.min(GRID_SIZE_MAX, Math.max(GRID_SIZE_MIN, gridSize));
-  } else {
-    warnings.push({ store: "scenes", id: sceneId, message: "gridSize was not an integer; using default" });
-  }
   return {
     mapMediaId: typeof mapMediaId === "string" ? asMediaId(mapMediaId) : null,
-    tokens: readTokens(record.tokens, sceneId, warnings),
-    gridSize: size,
+    tokens: readTokens(record.tokens, sceneId, warnings, "scenes"),
+    gridSize: readGridSize(record.gridSize, sceneId, warnings),
+    tokenSize: readTokenSize(record.tokenSize, record.gridSize, sceneId, warnings),
   };
 }
 
-function readTokens(value: unknown, sceneId: string, warnings: MigrationWarning[]): BattlegroundToken[] {
+function readGridSize(value: unknown, sceneId: string, warnings: MigrationWarning[]): number | null {
+  if (value === undefined) {
+    return GRID_SIZE_DEFAULT;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return Math.min(GRID_SIZE_MAX, Math.max(GRID_SIZE_MIN, value));
+  }
+  warnings.push({ store: "scenes", id: sceneId, message: "gridSize was not an integer; using default" });
+  return GRID_SIZE_DEFAULT;
+}
+
+function readTokenSize(
+  value: unknown,
+  gridSize: unknown,
+  sceneId: string,
+  warnings: MigrationWarning[],
+): number {
+  if (value === undefined) {
+    if (typeof gridSize === "number" && Number.isInteger(gridSize)) {
+      return Math.min(GRID_SIZE_MAX, Math.max(GRID_SIZE_MIN, gridSize));
+    }
+    return GRID_SIZE_DEFAULT;
+  }
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return Math.min(GRID_SIZE_MAX, Math.max(GRID_SIZE_MIN, value));
+  }
+  warnings.push({ store: "scenes", id: sceneId, message: "tokenSize was not an integer; using default" });
+  return GRID_SIZE_DEFAULT;
+}
+
+function readTokens(
+  value: unknown,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "scenes" | "encounters",
+): BattlegroundToken[] {
   if (value === undefined) {
     return [];
   }
   if (!Array.isArray(value)) {
-    warnings.push({ store: "scenes", id: sceneId, message: "battleground.tokens was not a list" });
+    warnings.push({ store, id: ownerId, message: "tokens was not a list" });
     return [];
   }
   const tokens: BattlegroundToken[] = [];
   for (const item of value) {
     if (typeof item !== "object" || item === null) {
-      warnings.push({ store: "scenes", id: sceneId, message: "A token was not an object and was dropped" });
+      warnings.push({ store, id: ownerId, message: "A token was not an object and was dropped" });
       continue;
     }
     const record = item as Record<string, unknown>;
     const id = typeof record.id === "string" ? record.id : null;
     const entityId = typeof record.entityId === "string" ? record.entityId : null;
     if (id === null || entityId === null) {
-      warnings.push({ store: "scenes", id: sceneId, message: "A token was missing ids and was dropped" });
+      warnings.push({ store, id: ownerId, message: "A token was missing ids and was dropped" });
       continue;
     }
+    const participantId = record.participantId;
     tokens.push({
       id: asTokenId(id),
       entityId: asEntityId(entityId),
+      participantId: typeof participantId === "string" ? asParticipantId(participantId) : null,
       x: typeof record.x === "number" ? record.x : 0.5,
       y: typeof record.y === "number" ? record.y : 0.5,
       visible: record.visible === false ? false : true,
