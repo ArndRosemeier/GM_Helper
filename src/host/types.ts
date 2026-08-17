@@ -133,15 +133,40 @@ export type Session = {
   createdAt: IsoDateTime;
 };
 
+export type TokenShape = "circle" | "square" | "portrait";
+
 export type BattlegroundToken = {
   id: TokenId;
-  entityId: EntityId;
+  /** Null for geometric stamp tokens with no card. */
+  entityId: EntityId | null;
   participantId: ParticipantId | null;
   x: number;
   y: number;
   visible: boolean;
   label: string;
+  /** Multiplier vs encounter.tokenSize. Stages: 0.5, 1, 2, 3, … */
+  scale: number;
+  shape: TokenShape;
+  /** Fill color for circle/square stamps; null for portrait tokens. */
+  color: string | null;
 };
+
+export const TOKEN_SCALE_MIN = 0.5;
+
+export const TOKEN_STAMP_COLORS: ReadonlyArray<string> = ["#ff0000", "#ffe600", "#000000"];
+
+export function nextTokenScale(current: number, delta: -1 | 1): number {
+  if (delta > 0) {
+    if (current < 1) {
+      return 1;
+    }
+    return Math.floor(current) + 1;
+  }
+  if (current <= 1) {
+    return TOKEN_SCALE_MIN;
+  }
+  return Math.floor(current) - 1;
+}
 
 export type Battleground = {
   tokens: ReadonlyArray<BattlegroundToken>;
@@ -153,12 +178,14 @@ export type Battleground = {
 export const GRID_SIZE_MIN = 16;
 export const GRID_SIZE_MAX = 128;
 export const GRID_SIZE_DEFAULT = 48;
+/** Default token diameter in CSS pixels (~10% under grid default). */
+export const TOKEN_SIZE_DEFAULT = 44;
 
 export function emptyBattleground(): Battleground {
   return {
     tokens: [],
     gridSize: GRID_SIZE_DEFAULT,
-    tokenSize: GRID_SIZE_DEFAULT,
+    tokenSize: TOKEN_SIZE_DEFAULT,
   };
 }
 

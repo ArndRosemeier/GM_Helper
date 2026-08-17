@@ -935,6 +935,22 @@ body.is-card-dragging .encounter-roster {
   flex: 0 0 auto;
 }
 
+.encounter-detail-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.encounter-icon-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+}
+
 .card-drag-ghost {
   position: fixed;
   z-index: 80;
@@ -1028,7 +1044,184 @@ body.is-card-dragging .encounter-roster {
   bottom: 12px;
   z-index: 2;
   margin: 0;
-  width: 168px;
+  width: 220px;
+}
+
+.board-stamps {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 14px;
+  background: rgb(11 9 7 / 0.55);
+}
+
+.board-stamp-column {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.board-scales.compact .board-stamps {
+  opacity: 0.4;
+}
+
+.board-scales.compact:hover .board-stamps,
+.board-scales.compact:focus-within .board-stamps {
+  opacity: 1;
+}
+
+.board-stamp {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid #111;
+  box-shadow: 0 0 0 1px #f7f3ea;
+  cursor: pointer;
+}
+
+.board-stamp.is-circle {
+  border-radius: 50%;
+}
+
+.board-stamp.is-square {
+  border-radius: 3px;
+}
+
+.board-stamp-add {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid #f7f3ea;
+  background: rgb(40 36 30 / 0.9);
+  color: #f7f3ea;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.token.is-stamp {
+  opacity: 0.8;
+  z-index: 0;
+}
+
+.token:not(.is-stamp) {
+  z-index: 1;
+}
+
+.token.is-selected {
+  z-index: 2;
+}
+
+.token.is-selected .token-art,
+.token.is-selected .token-shape {
+  box-shadow:
+    0 0 0 2px #f7f3ea,
+    0 0 0 5px #c9a227,
+    0 3px 8px rgba(0, 0, 0, 0.5);
+}
+
+.token-shape {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 2px solid #111;
+  box-shadow:
+    0 0 0 2px #f7f3ea,
+    0 0 0 4px #111,
+    0 3px 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.token-shape.is-circle {
+  border-radius: 50%;
+}
+
+.token-shape.is-square {
+  border-radius: 4px;
+}
+
+.token-float-controls {
+  position: absolute;
+  z-index: 3;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+.token-float-controls button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid #111;
+  background: #f7f3ea;
+  color: #111;
+  font-size: 16px;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
+.token-float-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.bg-card-picker {
+  width: min(420px, 92vw);
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+}
+
+.bg-card-picker-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.bg-card-picker-list li {
+  margin: 0;
+}
+
+.bg-card-picker-list button {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 8px;
+  border: 0;
+  border-bottom: 1px solid rgb(0 0 0 / 0.12);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bg-card-picker-list button em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--ink-dim);
+  flex-shrink: 0;
+}
+
+.token-art-mini.is-circle,
+.token-art-mini.is-square {
+  display: inline-block;
+  object-fit: unset;
+}
+
+.token-art-mini.is-square {
+  border-radius: 3px;
 }
 
 .grid-scale {
@@ -1223,11 +1416,38 @@ body.is-card-dragging .encounter-roster {
   text-align: center;
 }
 
-.lift {
+.table-corner-actions {
   position: absolute;
   top: 10px;
   right: 10px;
-  opacity: 0.35;
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.board-reset,
+.lift {
+  position: static;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  opacity: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.board-reset {
+  background: #3d7ea6;
+}
+
+.lift {
+  background: #c44b4b;
 }
 
 .tray .inline-form {

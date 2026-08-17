@@ -17,6 +17,8 @@ import {
   GRID_SIZE_DEFAULT,
   GRID_SIZE_MAX,
   GRID_SIZE_MIN,
+  TOKEN_SIZE_DEFAULT,
+  TOKEN_SCALE_MIN,
   nowIso,
   type Battleground,
   type BattlegroundToken,
@@ -28,6 +30,7 @@ import {
   type IsoDateTime,
   type LogEntry,
   type MediaRecord,
+  type TokenShape,
   type MediaRole,
   type RunCard,
   type RunCardBlock,
@@ -507,13 +510,13 @@ function readTokenSize(
     if (typeof gridSize === "number" && Number.isInteger(gridSize)) {
       return Math.min(GRID_SIZE_MAX, Math.max(GRID_SIZE_MIN, gridSize));
     }
-    return GRID_SIZE_DEFAULT;
+    return TOKEN_SIZE_DEFAULT;
   }
   if (typeof value === "number" && Number.isInteger(value)) {
     return Math.min(GRID_SIZE_MAX, Math.max(GRID_SIZE_MIN, value));
   }
   warnings.push({ store: "scenes", id: sceneId, message: "tokenSize was not an integer; using default" });
-  return GRID_SIZE_DEFAULT;
+  return TOKEN_SIZE_DEFAULT;
 }
 
 function readTokens(
@@ -537,20 +540,43 @@ function readTokens(
     }
     const record = item as Record<string, unknown>;
     const id = typeof record.id === "string" ? record.id : null;
-    const entityId = typeof record.entityId === "string" ? record.entityId : null;
-    if (id === null || entityId === null) {
-      warnings.push({ store, id: ownerId, message: "A token was missing ids and was dropped" });
+    if (id === null) {
+      warnings.push({ store, id: ownerId, message: "A token was missing id and was dropped" });
       continue;
     }
+    const entityIdRaw = record.entityId;
+    let entityId: ReturnType<typeof asEntityId> | null = null;
+    if (typeof entityIdRaw === "string" && entityIdRaw.length > 0) {
+      entityId = asEntityId(entityIdRaw);
+    } else if (entityIdRaw !== null && entityIdRaw !== undefined) {
+      warnings.push({ store, id: ownerId, message: "A token entityId was invalid and was cleared" });
+    }
     const participantId = record.participantId;
+    const scaleRaw = record.scale;
+    let scale = 1;
+    if (typeof scaleRaw === "number" && Number.isFinite(scaleRaw) && scaleRaw > 0) {
+      scale = scaleRaw < 1 ? TOKEN_SCALE_MIN : Math.max(1, Math.floor(scaleRaw));
+    }
+    const shapeRaw = record.shape;
+    const shape: TokenShape =
+      shapeRaw === "circle" || shapeRaw === "square" || shapeRaw === "portrait"
+        ? shapeRaw
+        : entityId === null
+          ? "circle"
+          : "portrait";
+    const colorRaw = record.color;
+    const color = typeof colorRaw === "string" && colorRaw.length > 0 ? colorRaw : null;
     tokens.push({
       id: asTokenId(id),
-      entityId: asEntityId(entityId),
+      entityId,
       participantId: typeof participantId === "string" ? asParticipantId(participantId) : null,
       x: typeof record.x === "number" ? record.x : 0.5,
       y: typeof record.y === "number" ? record.y : 0.5,
       visible: record.visible === false ? false : true,
-      label: typeof record.label === "string" ? record.label : "Token",
+      label: typeof record.label === "string" ? record.label : shape === "portrait" ? "Token" : "",
+      scale,
+      shape,
+      color,
     });
   }
   return tokens;

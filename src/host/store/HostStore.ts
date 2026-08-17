@@ -24,6 +24,8 @@ import {
   type AppMode,
   GRID_SIZE_MAX,
   GRID_SIZE_MIN,
+  nextTokenScale,
+  TOKEN_STAMP_COLORS,
   DEFAULT_CARD_CATEGORIES,
   type BattlegroundToken,
   type BusyStatus,
@@ -1011,7 +1013,7 @@ export class HostStore {
   async addToken(entityId: EntityId, visible: boolean): Promise<void> {
     const encounter = await this.ensureEncounter();
     const entity = this.requireEntity(entityId);
-    const token = {
+    const token: BattlegroundToken = {
       id: newTokenId(),
       entityId,
       participantId: null,
@@ -1019,12 +1021,51 @@ export class HostStore {
       y: 0.35 + Math.random() * 0.3,
       visible,
       label: entity.runCard.title,
+      scale: 1,
+      shape: "portrait",
+      color: null,
     };
     await this.putEncounter({
       ...encounter,
       tokens: [...encounter.tokens, token],
     });
     this.emit();
+  }
+
+  async addShapeToken(shape: "circle" | "square", color: string): Promise<void> {
+    if (shape !== "circle" && shape !== "square") {
+      this.setErrorAndThrow(`Unknown token shape: ${String(shape)}`);
+    }
+    if (!TOKEN_STAMP_COLORS.includes(color)) {
+      this.setErrorAndThrow(`Unknown token color: ${color}`);
+    }
+    const encounter = await this.ensureEncounter();
+    const token: BattlegroundToken = {
+      id: newTokenId(),
+      entityId: null,
+      participantId: null,
+      x: 0.4 + Math.random() * 0.2,
+      y: 0.4 + Math.random() * 0.2,
+      visible: true,
+      label: "",
+      scale: 1,
+      shape,
+      color,
+    };
+    await this.putEncounter({
+      ...encounter,
+      tokens: [...encounter.tokens, token],
+    });
+    this.emit();
+  }
+
+  async placeCardOnBattleground(entityId: EntityId): Promise<void> {
+    const entity = this.requireEntity(entityId);
+    if (isMapCard(entity)) {
+      await this.dropOnEncounter(entityId);
+      return;
+    }
+    await this.addToken(entityId, true);
   }
 
   private async placeVisibleToken(entityId: EntityId): Promise<void> {
@@ -1051,6 +1092,40 @@ export class HostStore {
     await this.putEncounter({
       ...encounter,
       tokens: this.mapEncounterToken(encounter, tokenId, (token) => ({ ...token, x, y })),
+    });
+    this.emit();
+  }
+
+  async adjustTokenScale(tokenId: TokenId, delta: -1 | 1): Promise<void> {
+    const encounter = await this.ensureEncounter();
+    await this.putEncounter({
+      ...encounter,
+      tokens: this.mapEncounterToken(encounter, tokenId, (token) => ({
+        ...token,
+        scale: nextTokenScale(token.scale, delta),
+      })),
+    });
+    this.emit();
+  }
+
+  async removeToken(tokenId: TokenId): Promise<void> {
+    const encounter = await this.ensureEncounter();
+    const token = encounter.tokens.find((item) => item.id === tokenId);
+    if (!token) {
+      this.setErrorAndThrow(`Encounter has no token ${tokenId}`);
+    }
+    let participants = encounter.participants;
+    let activeIndex = encounter.activeIndex;
+    if (token.participantId !== null) {
+      participants = participants.filter((item) => item.id !== token.participantId);
+      activeIndex =
+        participants.length === 0 ? 0 : Math.min(activeIndex, participants.length - 1);
+    }
+    await this.putEncounter({
+      ...encounter,
+      participants,
+      activeIndex,
+      tokens: encounter.tokens.filter((item) => item.id !== tokenId),
     });
     this.emit();
   }
@@ -1099,6 +1174,11 @@ export class HostStore {
   }
 
   async addParticipant(entityId: EntityId): Promise<void> {
+    const entity = this.requireEntity(entityId);
+    if (isMapCard(entity)) {
+      await this.dropOnEncounter(entityId);
+      return;
+    }
     const extra = this.participantFromEntity(entityId);
     const existing = this.encounter;
     if (!existing) {
@@ -1121,15 +1201,55 @@ export class HostStore {
 
   async beginEncounter(): Promise<void> {
     const encounter = this.encounter;
-    if (!encounter || encounter.participants.length === 0) {
+    if (!encounter) {
+      this.setErrorAndThrow("Encounter has no one in it");
+    }
+    let mapMediaId = encounter.mapMediaId;
+    const fighters: EncounterParticipant[] = [];
+    for (const participant of encounter.participants) {
+      const entity = this.entities.find((item) => item.id === participant.entityId) ?? null;
+      if (entity !== null && isMapCard(entity)) {
+        const mediaId = mapMediaIdFromCard(entity);
+        if (mediaId !== null) {
+          mapMediaId = mediaId;
+        }
+        continue;
+      }
+      fighters.push(participant);
+    }
+    if (fighters.length === 0) {
+      this.setErrorAndThrow("Encounter has no one in it");
+    }
+    const fighterEntityIds = new Set(fighters.map((fighter) => fighter.entityId));
+    const kept = encounter.tokens.filter(
+      (token) =>
+        token.entityId === null ||
+        (token.participantId === null &&
+          token.entityId !== null &&
+          !fighterEntityIds.has(token.entityId)),
+    );
+    await this.putEncounter({
+      ...encounter,
+      participants: fighters,
+      mapMediaId,
+      live: true,
+      tokens: [...this.tokensFromRoster(fighters, true), ...kept],
+    });
+    this.setSurface("table");
+  }
+
+  async resetEncounterBoard(): Promise<void> {
+    const encounter = this.requireEncounter();
+    if (encounter.participants.length === 0) {
       this.setErrorAndThrow("Encounter has no one in it");
     }
     await this.putEncounter({
       ...encounter,
+      activeIndex: 0,
       live: true,
-      tokens: this.tokensFromRoster(encounter.participants),
+      tokens: this.tokensFromRoster(encounter.participants, false),
     });
-    this.setSurface("table");
+    this.emit();
   }
 
   async dropOnEncounter(entityId: EntityId): Promise<void> {
@@ -1673,10 +1793,14 @@ export class HostStore {
 
   private tokensFromRoster(
     participants: ReadonlyArray<EncounterParticipant>,
+    reuseLayout: boolean,
   ): BattlegroundToken[] {
     const pool = new Map<EntityId, BattlegroundToken[]>();
-    if (this.encounter) {
+    if (reuseLayout && this.encounter) {
       for (const token of this.encounter.tokens) {
+        if (token.entityId === null) {
+          continue;
+        }
         const list = pool.get(token.entityId) ?? [];
         list.push(token);
         pool.set(token.entityId, list);
@@ -1701,6 +1825,9 @@ export class HostStore {
       y: reused?.y ?? 0.22 + Math.floor(index / 5) * 0.16,
       visible: true,
       label: participant.label,
+      scale: reused?.scale ?? 1,
+      shape: reused?.shape ?? "portrait",
+      color: reused?.color ?? null,
     };
   }
 
@@ -1834,7 +1961,7 @@ export class HostStore {
       ) {
         this.encounter = {
           ...this.encounter,
-          tokens: this.tokensFromRoster(this.encounter.participants),
+          tokens: this.tokensFromRoster(this.encounter.participants, false),
         };
         await this.putEncounter(this.encounter);
       }
@@ -1854,7 +1981,7 @@ export class HostStore {
         ) {
           this.encounter = {
             ...this.encounter,
-            tokens: this.tokensFromRoster(this.encounter.participants),
+            tokens: this.tokensFromRoster(this.encounter.participants, false),
           };
           await this.putEncounter(this.encounter);
         }
@@ -2241,7 +2368,14 @@ export class HostStore {
 }
 
 function isMapCard(entity: Entity): boolean {
-  if (entity.runCard.tags.includes("image") || entity.runCard.tags.includes("map")) {
+  if (entity.runCard.category === "Battlemap") {
+    return true;
+  }
+  if (
+    entity.runCard.tags.includes("image") ||
+    entity.runCard.tags.includes("map") ||
+    entity.runCard.tags.includes("battlemap")
+  ) {
     return true;
   }
   return mediaFrom(entity.runCard, "map") !== null;

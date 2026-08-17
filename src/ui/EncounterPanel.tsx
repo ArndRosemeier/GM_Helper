@@ -32,7 +32,7 @@ export function EncounterAmbient() {
         {participants.length === 0 ? (
           <p className="muted encounter-hint">
             {mapId === null
-              ? "Drag cards here. Drop an image card to set the map."
+              ? "Drag cards here. Battlemap or image cards set the map."
               : "Drag cards here. The same card can go in more than once."}
           </p>
         ) : (
@@ -72,7 +72,7 @@ export function EncounterAmbient() {
           disabled={participants.length === 0}
           onClick={() => store.run(store.beginEncounter())}
         >
-          Start encounter
+          Show Encounter
         </button>
       </div>
     </div>
@@ -92,9 +92,26 @@ export function EncounterDetail() {
     <section className="encounter-detail">
       <header className="row">
         <h3>Encounter</h3>
-        <button type="button" onClick={() => store.run(store.endEncounter())}>
-          End
-        </button>
+        <span className="encounter-detail-actions">
+          <button
+            type="button"
+            className="encounter-icon-btn"
+            aria-label="Reset encounter board"
+            title="Reset board"
+            onClick={() => store.run(store.resetEncounterBoard())}
+          >
+            ↻
+          </button>
+          <button
+            type="button"
+            className="encounter-icon-btn"
+            aria-label="End encounter"
+            title="End"
+            onClick={() => store.run(store.endEncounter())}
+          >
+            ×
+          </button>
+        </span>
       </header>
       <ul className="participants">
         {encounter.participants.map((participant, index) => (

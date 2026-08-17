@@ -91,6 +91,12 @@ export const SCHEMA_MIGRATIONS: ReadonlyArray<SchemaMigration> = [
     reason: "Scenes removed. Board prefs and idle tokens live on the encounter; scenes store is cleared.",
     apply: migrate8to9,
   },
+  {
+    from: 9,
+    to: 10,
+    reason: "Battleground tokens gain scale, shape, and color; entityId may be null for stamps.",
+    apply: migrate9to10,
+  },
 ];
 
 export function assertMigrationChain(
@@ -290,6 +296,23 @@ async function migrate8to9(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
   }
   for (const scene of scenes) {
     await db.delete("scenes", scene.id);
+  }
+  return warnings;
+}
+
+async function migrate9to10(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (next) {
+      await db.put("encounters", next);
+    }
+  }
+  for (const raw of await db.getAll("scenes")) {
+    const next = readScene(raw, warnings);
+    if (next) {
+      await db.put("scenes", next);
+    }
   }
   return warnings;
 }

@@ -215,7 +215,7 @@ export function SettingsView() {
               )
             }
           />
-          Start the defined encounter when the tablet is laid flat
+          Show the defined encounter when the tablet is laid flat
         </label>
         <div className="card-actions">
           {SURFACE_LOCKS.map((lock) => (
