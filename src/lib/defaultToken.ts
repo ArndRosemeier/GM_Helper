@@ -23,11 +23,7 @@ export function cardImageUrl(
   if (!block) {
     return null;
   }
-  const url = mediaUrls[block.mediaId];
-  if (!url) {
-    throw new Error(`Image for “${entity.runCard.title}” is in the card but not loaded`);
-  }
-  return url;
+  return mediaUrls[block.mediaId] ?? null;
 }
 
 function initialsFrom(label: string): string {
@@ -61,8 +57,8 @@ function colorFromSeed(seed: string): string {
 
 function escapeXml(value: string): string {
   return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }

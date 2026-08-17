@@ -14,7 +14,7 @@ import {
   textFrom,
   tracksFrom,
 } from "../host/runCard";
-import { readClipboardImage, useClipboardHasImage } from "../lib/clipboardImage";
+import { clipboardReadSupported, readClipboardImage } from "../lib/clipboardImage";
 import { saveBlobAsFile } from "../lib/saveBlob";
 import { CardPdfReader } from "./CardPdfReader";
 import { CardUrlFrame } from "./CardUrlFrame";
@@ -51,7 +51,7 @@ export function EntityCard({
   const focused = snap.focus?.id === entity.id;
   const drag = useCardEncounterDrag(entity.id, entity.runCard.title);
   const canGrab = cardHasGrabSource(entity, snap.sources);
-  const clipboardHasImage = useClipboardHasImage(expanded);
+  const clipboardImageSupported = clipboardReadSupported();
 
   useEffect(() => {
     if (controlled) {
@@ -78,15 +78,22 @@ export function EntityCard({
         {tokenUrl ? (
           <img className="card-token" src={tokenUrl} alt="" />
         ) : null}
+        {snap.session ? (
+          <button
+            type="button"
+            className="card-drag-handle"
+            aria-label={`Drag ${entity.runCard.title} to encounter`}
+            title="Drag to encounter"
+            onPointerDown={drag.onPointerDown}
+          >
+            ⠿
+          </button>
+        ) : null}
         <button
           type="button"
           className="focus-toggle"
           aria-expanded={expanded}
-          onPointerDown={drag.onPointerDown}
           onClick={() => {
-            if (drag.consumeClick()) {
-              return;
-            }
             store.setFocus(entity.id);
             if (onToggleExpand) {
               onToggleExpand();
@@ -176,15 +183,36 @@ export function EntityCard({
             <button type="button" disabled={!canGrab} onClick={() => setGrabbing(true)}>
               Grab image
             </button>
-            <button
-              type="button"
-              disabled={!clipboardHasImage}
-              onClick={() =>
-                store.run(readClipboardImage().then((blob) => store.insertEntityImage(entity.id, blob)))
-              }
-            >
-              Insert image
-            </button>
+            {clipboardImageSupported ? (
+              <button
+                type="button"
+                onClick={() =>
+                  store.run(readClipboardImage().then((blob) => store.insertEntityImage(entity.id, blob)))
+                }
+              >
+                Insert image
+              </button>
+            ) : null}
+            <label className="file-label">
+              Add image
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (!file) {
+                    return;
+                  }
+                  store.run(store.insertEntityImage(entity.id, file));
+                }}
+              />
+            </label>
+            {snap.session ? (
+              <button type="button" onClick={() => store.run(store.dropOnEncounter(entity.id))}>
+                Add to encounter
+              </button>
+            ) : null}
             {pictures.length > 0 ? (
               <button type="button" onClick={() => store.openMediaView(entity.id)}>
                 Show images

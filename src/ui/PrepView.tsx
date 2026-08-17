@@ -23,7 +23,7 @@ export function PrepView() {
         </p>
         <input
           type="file"
-          accept=".pdf,application/pdf"
+          accept="application/pdf,application/octet-stream,.pdf"
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (!file) {

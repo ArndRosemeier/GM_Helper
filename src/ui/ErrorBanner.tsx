@@ -6,10 +6,29 @@ export function ErrorBanner() {
   if (snap.error === null) {
     return null;
   }
-  return createPortal(
-    <button type="button" className="banner-error" onClick={() => store.setError(null)}>
-      {snap.error}
-    </button>,
-    document.body,
+  return (
+    <>
+      {/* Invisible twin keeps layout pushed down while the real bar sits above portals. */}
+      <div className="banner-error banner-error-slot" aria-hidden="true">
+        <div className="banner-error-dismiss">
+          <span className="banner-error-message">{snap.error}</span>
+          <span className="banner-error-hint">Tap to dismiss</span>
+        </div>
+      </div>
+      {createPortal(
+        <div className="banner-error banner-error-overlay" role="alert">
+          <button
+            type="button"
+            className="banner-error-dismiss"
+            onClick={() => store.setError(null)}
+            aria-label="Dismiss error"
+          >
+            <span className="banner-error-message">{snap.error}</span>
+            <span className="banner-error-hint">Tap to dismiss</span>
+          </button>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }

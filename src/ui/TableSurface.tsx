@@ -153,6 +153,22 @@ export function TableSurface() {
       <div className="table-corner-actions">
         <button
           type="button"
+          className="board-zoom"
+          aria-label="Zoom out"
+          onClick={() => camera.zoomBy(1 / 1.25)}
+        >
+          −
+        </button>
+        <button
+          type="button"
+          className="board-zoom"
+          aria-label="Zoom in"
+          onClick={() => camera.zoomBy(1.25)}
+        >
+          +
+        </button>
+        <button
+          type="button"
           className="board-reset"
           aria-label="Reset encounter board"
           title="Reset board"
@@ -212,7 +228,7 @@ function BoardToken({
   onPointerMove: (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId) => void;
 }) {
-  const sizePx = unitSize * token.scale;
+  const sizePx = Math.max(unitSize * token.scale, 44);
   const stamp = isStampToken(token);
   const shapeClass =
     token.shape === "square" ? "token-shape is-square" : token.shape === "circle" ? "token-shape is-circle" : null;
@@ -312,11 +328,11 @@ function BoardScaleControls({
   onPickCard?: () => void;
 }) {
   const { store, snap } = useHost();
+  const lastGrid = useRef(snap.encounter?.gridSize ?? GRID_SIZE_DEFAULT);
   if (!snap.session) {
     return null;
   }
   const encounter = snap.encounter;
-  const lastGrid = useRef(encounter?.gridSize ?? GRID_SIZE_DEFAULT);
   if (encounter?.gridSize !== null && encounter?.gridSize !== undefined) {
     lastGrid.current = encounter.gridSize;
   }

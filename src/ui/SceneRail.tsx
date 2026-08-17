@@ -27,7 +27,12 @@ export function SceneRail() {
   const loadAll = (file: File): void => {
     store.run(
       (async () => {
-        const kind = await store.peekArchiveKind(file);
+        const kind = await store.peekArchiveKind(file).catch((error: unknown) => {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `That file is not a GM Helper archive (.zip). ${detail}`,
+          );
+        });
         if (kind === "card") {
           await store.importCardArchive(file);
           return;
@@ -59,7 +64,9 @@ export function SceneRail() {
           Load all
           <input
             type="file"
-            accept=".zip,application/zip"
+            // iOS/WebKit often shows .zip files but refuses selection when accept is
+            // extension+MIME limited. Validate after pick via peekArchiveKind instead.
+            accept="application/zip,application/x-zip-compressed,application/octet-stream,.zip"
             disabled={snap.busy !== null}
             onChange={(event) => {
               const file = event.target.files?.[0];

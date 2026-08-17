@@ -5,6 +5,7 @@ import { useHost } from "../host/HostContext";
 import type { Entity } from "../host/types";
 import { factsFrom, textFrom, tracksFrom } from "../host/runCard";
 import {
+  canCaptureDisplayTab,
   captureViewportRegionPng,
   imageElementToPngBlob,
   tryLoadImageUrl,
@@ -32,6 +33,7 @@ export function TokenGrabModal({
   const [surface, setSurface] = useState<GrabSurface | null>(null);
   const [drag, setDrag] = useState<{ start: Point; current: Point } | null>(null);
   const [crop, setCrop] = useState<Crop | null>(null);
+  const [pageCaptureBlocked, setPageCaptureBlocked] = useState(false);
 
   useEffect(() => {
     let revoked: string | null = null;
@@ -56,6 +58,12 @@ export function TokenGrabModal({
             } catch {
               // Fall through to the live page frame.
             }
+          }
+          if (!(await canCaptureDisplayTab())) {
+            if (!cancelled) {
+              setPageCaptureBlocked(true);
+            }
+            return;
           }
           setSurface({ kind: "iframe", href: original.href });
           return;
@@ -198,7 +206,7 @@ export function TokenGrabModal({
           <h2 id="token-grab-title">{entity.runCard.title}</h2>
         </div>
         <div className="card-actions">
-          <button type="button" onClick={confirm} disabled={crop === null}>
+          <button type="button" onClick={confirm} disabled={crop === null || pageCaptureBlocked}>
             Use selection
           </button>
           <button type="button" onClick={onClose}>
@@ -207,7 +215,12 @@ export function TokenGrabModal({
         </div>
       </header>
       <div className="token-grab-stage">
-        {surface ? (
+        {pageCaptureBlocked ? (
+          <p className="muted">
+            This browser cannot capture a live web page for Grab image. Use Add image on the card, or open
+            the page and save a screenshot.
+          </p>
+        ) : surface ? (
           <div className="token-grab-frame" ref={stageRef}>
             {surface.kind === "image" ? (
               <img
@@ -258,9 +271,11 @@ export function TokenGrabModal({
         )}
       </div>
       <p className="muted token-grab-hint">
-        {surface?.kind === "iframe"
-          ? "Drag a rectangle on the page. Chrome may ask to share this tab when you use the selection."
-          : "Drag a rectangle on the card. That crop is stored as the image."}
+        {pageCaptureBlocked
+          ? null
+          : surface?.kind === "iframe"
+            ? "Drag a rectangle on the page. Chrome may ask to share this tab when you use the selection."
+            : "Drag a rectangle on the card. That crop is stored as the image."}
       </p>
     </div>,
     document.body,

@@ -31,6 +31,7 @@ export function useBoardPanZoom(viewportRef: RefObject<HTMLDivElement | null>): 
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  zoomBy: (factor: number) => void;
 } {
   const [view, setView] = useState<BoardView>(START_VIEW);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -103,7 +104,17 @@ export function useBoardPanZoom(viewportRef: RefObject<HTMLDivElement | null>): 
     }
   };
 
-  return { view, onPointerDown, onPointerMove, onPointerUp };
+  const zoomBy = (factor: number): void => {
+    const node = viewportRef.current;
+    if (!node) {
+      return;
+    }
+    const originX = node.clientWidth / 2;
+    const originY = node.clientHeight / 2;
+    setView((current) => zoomBoardView(current, originX, originY, factor));
+  };
+
+  return { view, onPointerDown, onPointerMove, onPointerUp, zoomBy };
 }
 
 function pointIn(node: HTMLElement, clientX: number, clientY: number): { x: number; y: number } {

@@ -32,7 +32,13 @@ function Surfaces() {
       );
     }
     const Player = surface.component;
-    return <Player />;
+    return (
+      <div className="gm-root">
+        <ErrorBanner />
+        <BusyModal />
+        <Player />
+      </div>
+    );
   }
 
   const body =

@@ -1,3 +1,7 @@
+export async function canCaptureDisplayTab(): Promise<boolean> {
+  return typeof navigator.mediaDevices?.getDisplayMedia === "function";
+}
+
 /**
  * Capture a viewport rectangle from this tab as a PNG.
  * Uses the display-media picker with preferCurrentTab when the browser supports it.
@@ -11,7 +15,7 @@ export async function captureViewportRegionPng(region: {
   if (region.width < 1 || region.height < 1) {
     throw new Error("Capture region is empty");
   }
-  if (!navigator.mediaDevices?.getDisplayMedia) {
+  if (!(await canCaptureDisplayTab())) {
     throw new Error("This browser cannot capture the page for Grab image");
   }
 
