@@ -93,7 +93,18 @@ export function EntityCard({
           type="button"
           className="focus-toggle"
           aria-expanded={expanded}
+          onPointerDown={(event) => {
+            // Mouse/pen: drag from the title like before. Touch keeps scrolling;
+            // use the handle there.
+            if (!snap.session || event.pointerType === "touch") {
+              return;
+            }
+            drag.onPointerDown(event);
+          }}
           onClick={() => {
+            if (drag.consumeClick()) {
+              return;
+            }
             store.setFocus(entity.id);
             if (onToggleExpand) {
               onToggleExpand();

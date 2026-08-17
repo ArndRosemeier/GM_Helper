@@ -6,11 +6,18 @@ export type AppSettings = {
   openRouterModelChat: OpenRouterModelId;
   openRouterModelImage: OpenRouterModelId;
   allowCampaignContext: boolean;
+  /** CSS zoom factor for the whole UI (Safari/Chrome). */
+  uiScale: number;
 };
 
 export type SettingsPatch = {
   [K in keyof AppSettings]: { field: K; value: AppSettings[K] };
 }[keyof AppSettings];
+
+export const UI_SCALE_MIN = 0.85;
+export const UI_SCALE_MAX = 1.35;
+export const UI_SCALE_STEP = 0.05;
+export const UI_SCALE_DEFAULT = 1;
 
 export function parseOpenRouterApiKey(value: string): OpenRouterApiKey {
   const trimmed = value.trim();
@@ -61,6 +68,25 @@ function optionalBooleanField(record: Record<string, unknown>, field: string, fa
   return requireBooleanField(record, field);
 }
 
+export function parseUiScale(value: unknown): number {
+  if (value === undefined || value === null) {
+    return UI_SCALE_DEFAULT;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error("Settings.uiScale must be a finite number");
+  }
+  const stepped = Math.round(value / UI_SCALE_STEP) * UI_SCALE_STEP;
+  const clamped = Math.min(UI_SCALE_MAX, Math.max(UI_SCALE_MIN, stepped));
+  return Math.round(clamped * 100) / 100;
+}
+
+function optionalUiScaleField(record: Record<string, unknown>, field: string): number {
+  if (!(field in record) || record[field] === undefined) {
+    return UI_SCALE_DEFAULT;
+  }
+  return parseUiScale(record[field]);
+}
+
 const FALLBACK_CHAT_MODEL = "openai/gpt-4.1-mini";
 const FALLBACK_IMAGE_MODEL = "google/gemini-2.5-flash-image-preview";
 
@@ -74,6 +100,7 @@ export function parseAppSettings(value: unknown): AppSettings {
     openRouterModelChat: parseStoredModelId(record, "openRouterModelChat", FALLBACK_CHAT_MODEL),
     openRouterModelImage: parseStoredModelId(record, "openRouterModelImage", FALLBACK_IMAGE_MODEL),
     allowCampaignContext: optionalBooleanField(record, "allowCampaignContext", false),
+    uiScale: optionalUiScaleField(record, "uiScale"),
   };
 }
 
@@ -107,4 +134,5 @@ export const DEFAULT_SETTINGS: AppSettings = parseAppSettings({
   openRouterModelChat: "openai/gpt-4.1-mini",
   openRouterModelImage: "google/gemini-2.5-flash-image-preview",
   allowCampaignContext: false,
+  uiScale: UI_SCALE_DEFAULT,
 });

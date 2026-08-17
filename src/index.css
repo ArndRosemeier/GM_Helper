@@ -12,6 +12,7 @@
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
   --radius: 18px;
   --tap: 44px;
+  --ui-scale: 1;
   --font-ui: "Segoe UI", system-ui, sans-serif;
   --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Times New Roman", serif;
   font-family: var(--font-ui);
@@ -23,15 +24,28 @@
   box-sizing: border-box;
 }
 
-html,
+/*
+ * Zoom scales paint + layout. Compensate root size so the visual page still
+ * matches one viewport (otherwise zoom-out leaves a gap and zoom-in scrolls).
+ */
+html {
+  zoom: var(--ui-scale);
+  margin: 0;
+  width: calc(100vw / var(--ui-scale));
+  height: calc(100dvh / var(--ui-scale));
+  min-height: calc(100dvh / var(--ui-scale));
+  overflow: hidden;
+  background: radial-gradient(1200px 800px at 10% 0%, #2a2218 0%, var(--bg) 55%);
+}
+
 body,
 #root {
   margin: 0;
-  min-height: 100%;
-  min-height: 100dvh;
+  width: 100%;
   height: 100%;
-  height: 100dvh;
-  background: radial-gradient(1200px 800px at 10% 0%, #2a2218 0%, var(--bg) 55%);
+  min-height: 100%;
+  overflow: hidden;
+  background: inherit;
 }
 
 button,
@@ -1166,6 +1180,17 @@ body.is-card-dragging .encounter-roster {
   padding: 18px;
   display: grid;
   gap: 22px;
+}
+
+.ui-scale {
+  display: grid;
+  gap: 8px;
+}
+
+.ui-scale input[type="range"] {
+  width: 100%;
+  min-height: var(--tap);
+  margin: 0;
 }
 
 .prep-bar {

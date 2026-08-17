@@ -4,6 +4,11 @@ import {
   parseAppSettings,
   parseOpenRouterApiKeyInput,
   parseOpenRouterModelId,
+  parseUiScale,
+  UI_SCALE_DEFAULT,
+  UI_SCALE_MAX,
+  UI_SCALE_MIN,
+  UI_SCALE_STEP,
   type OpenRouterModelId,
 } from "../host/settings";
 import {
@@ -84,6 +89,7 @@ export function SettingsView() {
     ),
   );
   const [catalog, setCatalog] = useState<OpenRouterModelCatalog | null>(null);
+  const uiScale = snap.settings.uiScale;
 
   useEffect(() => {
     let cancelled = false;
@@ -113,6 +119,10 @@ export function SettingsView() {
     }
   };
 
+  const setUiScale = (raw: number): void => {
+    store.run(store.applySettingsPatch({ field: "uiScale", value: parseUiScale(raw) }));
+  };
+
   return (
     <div className="settings">
       <header className="prep-bar">
@@ -121,6 +131,31 @@ export function SettingsView() {
         </button>
         <h1>Settings</h1>
       </header>
+      <section>
+        <h2>Display</h2>
+        <p className="muted">
+          Scales every control on this device. Works in Safari and Chrome; Firefox ignores it.
+        </p>
+        <label className="ui-scale">
+          <span>Interface size {String(Math.round(uiScale * 100))}%</span>
+          <input
+            type="range"
+            min={UI_SCALE_MIN}
+            max={UI_SCALE_MAX}
+            step={UI_SCALE_STEP}
+            value={uiScale}
+            aria-label="Interface size"
+            onChange={(event) => setUiScale(Number(event.target.value))}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={uiScale === UI_SCALE_DEFAULT}
+          onClick={() => setUiScale(UI_SCALE_DEFAULT)}
+        >
+          Reset to 100%
+        </button>
+      </section>
       <section>
         <h2>OpenRouter</h2>
         <p className="muted">Key stays on this device. AI tasks fail loud if it is missing.</p>

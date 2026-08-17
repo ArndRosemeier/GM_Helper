@@ -4,11 +4,13 @@ import { PrepView } from "./ui/PrepView";
 import { SettingsView } from "./ui/SettingsView";
 import { BusyModal } from "./ui/BusyModal";
 import { ErrorBanner } from "./ui/ErrorBanner";
+import { useUiScale } from "./ui/useUiScale";
 import { featureRegistry } from "./host/features/singleton";
 import "./features/registerAll";
 
 function Surfaces() {
   const { store, snap } = useHost();
+  useUiScale();
 
   if (!snap.ready) {
     return (

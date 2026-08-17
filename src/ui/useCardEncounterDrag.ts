@@ -49,8 +49,10 @@ export function useCardEncounterDrag(
         didDrag.current = true;
         document.body.classList.add("is-card-dragging");
       }
-      setGhost({ title, x: moveEvent.clientX, y: moveEvent.clientY });
-      setEncounterDropHot(moveEvent.clientX, moveEvent.clientY);
+      moveEvent.preventDefault();
+      const point = documentPointFromClient(moveEvent.clientX, moveEvent.clientY);
+      setGhost({ title, x: point.x, y: point.y });
+      setEncounterDropHot(point.x, point.y);
     };
 
     const finish = (upEvent: PointerEvent): void => {
@@ -58,7 +60,8 @@ export function useCardEncounterDrag(
       handle.removeEventListener("pointermove", onMove);
       handle.removeEventListener("pointerup", finish);
       handle.removeEventListener("pointercancel", finish);
-      const dropped = dragging.current && encounterDropFromPoint(upEvent.clientX, upEvent.clientY);
+      const point = documentPointFromClient(upEvent.clientX, upEvent.clientY);
+      const dropped = dragging.current && encounterDropFromPoint(point.x, point.y);
       dragging.current = false;
       origin.current = null;
       setGhost(null);
@@ -83,6 +86,21 @@ export function useCardEncounterDrag(
   };
 
   return { onPointerDown, consumeClick, ghost };
+}
+
+/** CSS zoom on <html> maps visual client coords into document layout coords. */
+function documentZoom(): number {
+  const raw = getComputedStyle(document.documentElement).zoom;
+  if (!raw || raw === "normal") {
+    return 1;
+  }
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+function documentPointFromClient(clientX: number, clientY: number): { x: number; y: number } {
+  const zoom = documentZoom();
+  return { x: clientX / zoom, y: clientY / zoom };
 }
 
 function encounterDropFromPoint(x: number, y: number): boolean {

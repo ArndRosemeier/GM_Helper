@@ -24,6 +24,10 @@ DirectoryIndex index.html
   <FilesMatch "\.(js|css|gif|png|svg|woff2?|mjs|wasm|bcmap)$">
     Header set Cache-Control "public, max-age=31536000, immutable"
   </FilesMatch>
+  # Override: sw.js is not content-hashed; long cache blocks PWA updates after deploy.
+  <FilesMatch "^(sw\.js|registerSW\.js)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
   <FilesMatch "\.(html|json|webmanifest)$">
     Header set Cache-Control "no-cache"
   </FilesMatch>
