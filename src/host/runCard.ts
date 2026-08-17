@@ -102,14 +102,22 @@ export function newTrack(label: string, current: number, max: number | null): Tr
 }
 
 export function withMedia(card: RunCard, block: MediaBlock): RunCard {
-  const without = card.blocks.filter(
-    (existing) => !(existing.kind === "media" && existing.role === block.role),
-  );
-  return { ...card, blocks: [...without, block] };
+  return { ...card, blocks: [...card.blocks, block] };
 }
 
 export function withoutMedia(card: RunCard): RunCard {
   return { ...card, blocks: card.blocks.filter((block) => block.kind !== "media") };
+}
+
+export function withoutMediaId(card: RunCard, mediaId: MediaBlock["mediaId"]): RunCard {
+  return {
+    ...card,
+    blocks: card.blocks.filter((block) => !(block.kind === "media" && block.mediaId === mediaId)),
+  };
+}
+
+export function firstMediaBlock(card: RunCard): MediaBlock | null {
+  return mediaBlocksFrom(card)[0] ?? null;
 }
 
 export function withSecret(card: RunCard, body: string): RunCard {

@@ -27,13 +27,22 @@ export function SceneRail() {
   };
 
   const loadAll = (file: File): void => {
-    const ok = window.confirm(
-      "Load all replaces every campaign, doc, and image in this browser with the archive. Your OpenRouter API key is kept. Continue?",
+    store.run(
+      (async () => {
+        const kind = await store.peekArchiveKind(file);
+        if (kind === "card") {
+          await store.importCardArchive(file);
+          return;
+        }
+        const ok = window.confirm(
+          "Load all replaces every campaign, doc, and image in this browser with the archive. Your OpenRouter API key is kept. Continue?",
+        );
+        if (!ok) {
+          return;
+        }
+        await store.importAllArchive(file);
+      })(),
     );
-    if (!ok) {
-      return;
-    }
-    store.run(store.importAllArchive(file));
   };
 
   return (

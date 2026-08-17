@@ -4,10 +4,13 @@ import { asCampaignId, asEntityId, asMediaId, asSessionId, type CampaignId, type
 import type { Campaign, EncounterState, MediaRecord, Session, Source } from "../types";
 import {
   ARCHIVE_FORMAT,
+  CARD_ARCHIVE_FORMAT,
+  type AnyArchiveManifest,
   type ArchiveData,
   type ArchiveManifest,
   type ArchiveMediaMeta,
   type ArchiveSourceMeta,
+  type CardArchiveData,
   uint8ArrayToBlob,
 } from "../../lib/archive";
 import {
@@ -34,12 +37,20 @@ export type MigratedArchive = {
 };
 
 export function parseArchiveManifest(value: unknown): ArchiveManifest {
+  const any = parseAnyArchiveManifest(value);
+  if (any.format !== ARCHIVE_FORMAT) {
+    throw new Error(`Expected a full GM Helper archive, got ${any.format}`);
+  }
+  return any;
+}
+
+export function parseAnyArchiveManifest(value: unknown): AnyArchiveManifest {
   if (typeof value !== "object" || value === null) {
     throw new Error("Archive manifest is not an object");
   }
   const record = value as Record<string, unknown>;
-  if (record.format !== ARCHIVE_FORMAT) {
-    throw new Error(`Archive format is not ${ARCHIVE_FORMAT}`);
+  if (record.format !== ARCHIVE_FORMAT && record.format !== CARD_ARCHIVE_FORMAT) {
+    throw new Error(`Archive format is not ${ARCHIVE_FORMAT} or ${CARD_ARCHIVE_FORMAT}`);
   }
   const schemaVersion = parseStoredSchemaVersion(record.schemaVersion);
   if (schemaVersion > SCHEMA_VERSION) {
@@ -52,9 +63,90 @@ export function parseArchiveManifest(value: unknown): ArchiveManifest {
     throw new Error("Archive manifest has no exportedAt");
   }
   return {
-    format: ARCHIVE_FORMAT,
+    format: record.format,
     schemaVersion,
-    exportedAt: exportedAt as ArchiveManifest["exportedAt"],
+    exportedAt: exportedAt as AnyArchiveManifest["exportedAt"],
+  };
+}
+
+export function migrateCardArchivePayload(
+  dataValue: unknown,
+  mediaFiles: ReadonlyMap<string, Uint8Array>,
+  sourceFiles: ReadonlyMap<string, Uint8Array>,
+  schemaVersion: number,
+): {
+  data: CardArchiveData;
+  media: ReadonlyArray<MediaRecord>;
+  sources: ReadonlyArray<Source>;
+  warnings: ReadonlyArray<MigrationWarning>;
+} {
+  if (schemaVersion > SCHEMA_VERSION) {
+    throw new Error(
+      `Archive schema ${String(schemaVersion)} is newer than this build (${String(SCHEMA_VERSION)}). Update the app.`,
+    );
+  }
+  if (typeof dataValue !== "object" || dataValue === null) {
+    throw new Error("Card archive data.json is not an object");
+  }
+  const record = dataValue as Record<string, unknown>;
+  const warnings: MigrationWarning[] = [];
+  const entity = readEntity(record.entity, warnings);
+  if (entity === null) {
+    throw new Error("Card archive has no readable card");
+  }
+  const chunks = readList(record.chunks, readChunk, warnings);
+  const sourceMetas = readArchiveSources(record.sources, warnings);
+  const sources: Source[] = [];
+  for (const meta of sourceMetas) {
+    const bytes = meta.hasFile ? sourceFiles.get(meta.id) : undefined;
+    if (meta.hasFile && !bytes) {
+      warnings.push({
+        store: "sources",
+        id: meta.id,
+        message: "Source file was listed but missing from the ZIP",
+      });
+    }
+    sources.push({
+      id: meta.id,
+      campaignId: meta.campaignId,
+      title: meta.title,
+      kind: meta.kind,
+      createdAt: meta.createdAt,
+      mimeType: meta.mimeType,
+      bytes: bytes ? uint8ArrayToBlob(bytes, meta.mimeType) : null,
+    });
+  }
+  const mediaMetas = readArchiveMedia(record.media, warnings);
+  const media: MediaRecord[] = [];
+  for (const meta of mediaMetas) {
+    const bytes = mediaFiles.get(meta.id);
+    if (!bytes) {
+      warnings.push({
+        store: "media",
+        id: meta.id,
+        message: "Media file was listed but missing from the ZIP",
+      });
+      continue;
+    }
+    media.push({
+      id: meta.id,
+      campaignId: meta.campaignId,
+      mimeType: meta.mimeType,
+      role: meta.role,
+      bytes: uint8ArrayToBlob(bytes, meta.mimeType),
+    });
+  }
+  return {
+    data: {
+      schemaVersion: SCHEMA_VERSION,
+      entity,
+      media: mediaMetas,
+      sources: sourceMetas,
+      chunks,
+    },
+    media,
+    sources,
+    warnings,
   };
 }
 

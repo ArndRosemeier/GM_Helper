@@ -299,15 +299,46 @@ export async function generateImagePng(
   prompt: string,
   aspectRatio: ImageAspectRatio = "1:1",
 ): Promise<Blob> {
+  return postImages(config, {
+    model: config.imageModel,
+    prompt,
+    n: 1,
+    aspect_ratio: aspectRatio,
+  });
+}
+
+/** Image-to-image edit: prompt + one reference image via OpenRouter input_references. */
+export async function editImagePng(
+  config: OpenRouterConfig,
+  prompt: string,
+  reference: Blob,
+): Promise<Blob> {
+  const trimmed = prompt.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Modification instructions are empty");
+  }
+  const dataUrl = await blobToDataUrl(reference);
+  return postImages(config, {
+    model: config.imageModel,
+    prompt: trimmed,
+    n: 1,
+    input_references: [
+      {
+        type: "image_url",
+        image_url: { url: dataUrl },
+      },
+    ],
+  });
+}
+
+async function postImages(
+  config: OpenRouterConfig,
+  body: Record<string, unknown>,
+): Promise<Blob> {
   const response = await fetch(IMAGES_URL, {
     method: "POST",
     headers: headers(config.apiKey),
-    body: JSON.stringify({
-      model: config.imageModel,
-      prompt,
-      n: 1,
-      aspect_ratio: aspectRatio,
-    }),
+    body: JSON.stringify(body),
   });
   const payload = (await response.json()) as {
     data?: ReadonlyArray<{ b64_json?: unknown; media_type?: unknown }>;
@@ -330,6 +361,18 @@ export async function generateImagePng(
   const mime =
     typeof first.media_type === "string" && first.media_type.length > 0 ? first.media_type : "image/png";
   return base64ToBlob(first.b64_json, mime);
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  const mime = blob.type.length > 0 ? blob.type : "image/png";
+  return `data:${mime};base64,${btoa(binary)}`;
 }
 
 function base64ToBlob(b64: string, mime: string): Blob {

@@ -1,9 +1,10 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { cardTypeLabel } from "../host/cardModel";
 import { SCHEMA_VERSION } from "../host/persist";
 import { useHost } from "../host/HostContext";
 import { emptyRunCard } from "../host/runCard";
-import { asSessionId } from "../host/ids";
+import { asSessionId, type EntityId } from "../host/ids";
 import { BattlegroundPrep } from "./TableSurface";
 import { EncounterDetail } from "./EncounterPanel";
 import { MediaViewer } from "./MediaViewer";
@@ -14,6 +15,11 @@ export function PrepView() {
   const { store, snap } = useHost();
   const [name, setName] = useState("");
   const [sessionTitle, setSessionTitle] = useState("");
+  const [pendingDeleteId, setPendingDeleteId] = useState<EntityId | null>(null);
+  const pendingDelete =
+    pendingDeleteId === null
+      ? null
+      : (snap.entities.find((entity) => entity.id === pendingDeleteId) ?? null);
 
   return (
     <div className="prep">
@@ -24,7 +30,7 @@ export function PrepView() {
         <h1>Docs</h1>
       </header>
       {snap.urlView ? <UrlViewer /> : snap.sourceView ? <SourceViewer /> : null}
-      {snap.mediaViewId ? <MediaViewer /> : null}
+      {snap.mediaViewEntityId ? <MediaViewer /> : null}
       <section>
         <h2>Library</h2>
         <form
@@ -54,7 +60,7 @@ export function PrepView() {
                 type="button"
                 className="tiny"
                 aria-label={`Delete ${entity.runCard.title}`}
-                onClick={() => store.run(store.deleteEntity(entity.id))}
+                onClick={() => setPendingDeleteId(entity.id)}
               >
                 ×
               </button>
@@ -186,6 +192,40 @@ export function PrepView() {
           is structure-only and omits doc files and pictures.
         </p>
       </section>
+      {pendingDelete
+        ? createPortal(
+            <div
+              className="busy-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-card-title"
+              onClick={() => setPendingDeleteId(null)}
+            >
+              <div className="busy-modal-card" onClick={(event) => event.stopPropagation()}>
+                <p className="eyebrow">Card</p>
+                <h2 id="delete-card-title">Delete this card?</h2>
+                <p>
+                  “{pendingDelete.runCard.title}” will be removed permanently. This cannot be undone.
+                </p>
+                <div className="card-actions">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const id = pendingDelete.id;
+                      store.run(store.deleteEntity(id).then(() => setPendingDeleteId(null)));
+                    }}
+                  >
+                    Delete
+                  </button>
+                  <button type="button" onClick={() => setPendingDeleteId(null)}>
+                    Keep
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

@@ -15,6 +15,7 @@ import type {
 import type { CampaignId, EntityId, MediaId, SourceId } from "../host/ids";
 
 export const ARCHIVE_FORMAT = "gm-helper-archive";
+export const CARD_ARCHIVE_FORMAT = "gm-helper-card";
 export const ARCHIVE_MANIFEST_PATH = "manifest.json";
 export const ARCHIVE_DATA_PATH = "data.json";
 export const ARCHIVE_MEDIA_DIR = "media/";
@@ -25,6 +26,14 @@ export type ArchiveManifest = {
   schemaVersion: number;
   exportedAt: IsoDateTime;
 };
+
+export type CardArchiveManifest = {
+  format: typeof CARD_ARCHIVE_FORMAT;
+  schemaVersion: number;
+  exportedAt: IsoDateTime;
+};
+
+export type AnyArchiveManifest = ArchiveManifest | CardArchiveManifest;
 
 /** Media metadata in data.json — bytes live under media/<id>. */
 export type ArchiveMediaMeta = {
@@ -63,7 +72,23 @@ export type PackedArchive = {
   sourceBytes: ReadonlyMap<SourceId, Uint8Array>;
 };
 
-export function packArchiveZip(archive: PackedArchive): Blob {
+/** One card plus its attached images/docs — no campaign/session binding on import. */
+export type CardArchiveData = {
+  schemaVersion: number;
+  entity: Entity;
+  media: ReadonlyArray<ArchiveMediaMeta>;
+  sources: ReadonlyArray<ArchiveSourceMeta>;
+  chunks: ReadonlyArray<SourceChunk>;
+};
+
+export type PackedCardArchive = {
+  manifest: CardArchiveManifest;
+  data: CardArchiveData;
+  mediaBytes: ReadonlyMap<MediaId, Uint8Array>;
+  sourceBytes: ReadonlyMap<SourceId, Uint8Array>;
+};
+
+export function packArchiveZip(archive: PackedArchive | PackedCardArchive): Blob {
   const files: Record<string, Uint8Array> = {
     [ARCHIVE_MANIFEST_PATH]: strToU8(JSON.stringify(archive.manifest, null, 2)),
     [ARCHIVE_DATA_PATH]: strToU8(JSON.stringify(archive.data, null, 2)),

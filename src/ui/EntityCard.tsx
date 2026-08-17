@@ -10,12 +10,12 @@ import { useCardEncounterDrag } from "./useCardEncounterDrag";
 import {
   factsFrom,
   mediaBlocksFrom,
-  mediaFrom,
   secretsFrom,
   textFrom,
   tracksFrom,
 } from "../host/runCard";
 import { readClipboardImage, useClipboardHasImage } from "../lib/clipboardImage";
+import { saveBlobAsFile } from "../lib/saveBlob";
 import { CardPdfReader } from "./CardPdfReader";
 import { CardUrlFrame } from "./CardUrlFrame";
 import { TokenGrabModal } from "./TokenGrabModal";
@@ -27,16 +27,14 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
   const tracks = tracksFrom(entity.runCard);
   const secrets = secretsFrom(entity.runCard);
   const text = textFrom(entity.runCard);
-  const tokenArt = mediaFrom(entity.runCard, "token");
-  const pictures = mediaBlocksFrom(entity.runCard).filter((block) => block.role !== "token");
-  const showImageId = pictures[0]?.mediaId ?? tokenArt?.mediaId ?? null;
+  const pictures = mediaBlocksFrom(entity.runCard);
   const original = cardOriginal(entity, snap.sources);
   const [expanded, setExpanded] = useState(entity.id === snap.openedEntityId);
   const [secretOpen, setSecretOpen] = useState(revealSecrets);
   const [titleDraft, setTitleDraft] = useState(entity.runCard.title);
   const [textDraft, setTextDraft] = useState(text);
   const [grabbing, setGrabbing] = useState(false);
-  const [removingImage, setRemovingImage] = useState(false);
+  const [deletingCard, setDeletingCard] = useState(false);
   const tokenUrl = cardImageUrl(entity, snap.mediaUrls);
   const showsOriginal = original.kind === "pdf" || original.kind === "url";
   const isTextCard = !showsOriginal && !entity.runCard.tags.includes("image");
@@ -65,18 +63,7 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
     >
       <div className="focus-header">
         {tokenUrl ? (
-          <button
-            type="button"
-            className="card-token-btn"
-            aria-label={`Remove image from ${entity.runCard.title}`}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              setRemovingImage(true);
-            }}
-          >
-            <img className="card-token" src={tokenUrl} alt="" />
-          </button>
+          <img className="card-token" src={tokenUrl} alt="" />
         ) : null}
         <button
           type="button"
@@ -166,11 +153,6 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
               aria-label="Card title"
             />
             <button type="submit">Rename</button>
-            {entity.lifecycle === "ephemeral" ? (
-              <button type="button" onClick={() => store.run(store.promoteEntity(entity.id))}>
-                This one matters
-              </button>
-            ) : null}
             <button type="button" onClick={() => store.run(store.generateTokenArt(entity.id))}>
               Generate image
             </button>
@@ -186,12 +168,29 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
             >
               Insert image
             </button>
-            {showImageId ? (
-              <button type="button" onClick={() => store.openMediaView(showImageId)}>
-                Show image
+            {pictures.length > 0 ? (
+              <button type="button" onClick={() => store.openMediaView(entity.id)}>
+                Show images
               </button>
             ) : null}
-            <button type="button" onClick={() => store.run(store.deleteEntity(entity.id))}>
+            <button
+              type="button"
+              onClick={() =>
+                store.run(
+                  saveBlobAsFile(
+                    () => store.exportCardArchive(entity.id),
+                    `${safeCardFileStem(entity.runCard.title)}.zip`,
+                    {
+                      description: "GM Helper card",
+                      accept: { "application/zip": [".zip"] },
+                    },
+                  ).then(() => undefined),
+                )
+              }
+            >
+              Export
+            </button>
+            <button type="button" onClick={() => setDeletingCard(true)}>
               Delete
             </button>
           </form>
@@ -270,29 +269,31 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
         </div>
       ) : null}
       {grabbing ? <TokenGrabModal entity={entity} onClose={() => setGrabbing(false)} /> : null}
-      {removingImage
+      {deletingCard
         ? createPortal(
             <div
               className="busy-modal"
               role="dialog"
               aria-modal="true"
-              aria-labelledby="remove-image-title"
-              onClick={() => setRemovingImage(false)}
+              aria-labelledby="delete-card-title"
+              onClick={() => setDeletingCard(false)}
             >
               <div className="busy-modal-card" onClick={(event) => event.stopPropagation()}>
-                <p className="eyebrow">Image</p>
-                <h2 id="remove-image-title">Remove image from this card?</h2>
-                <p>The picture will be deleted from "{entity.runCard.title}".</p>
+                <p className="eyebrow">Card</p>
+                <h2 id="delete-card-title">Delete this card?</h2>
+                <p>
+                  “{entity.runCard.title}” will be removed permanently. This cannot be undone.
+                </p>
                 <div className="card-actions">
                   <button
                     type="button"
                     onClick={() => {
-                      store.run(store.removeEntityImages(entity.id).then(() => setRemovingImage(false)));
+                      store.run(store.deleteEntity(entity.id).then(() => setDeletingCard(false)));
                     }}
                   >
-                    Remove
+                    Delete
                   </button>
-                  <button type="button" onClick={() => setRemovingImage(false)}>
+                  <button type="button" onClick={() => setDeletingCard(false)}>
                     Keep
                   </button>
                 </div>
@@ -323,4 +324,13 @@ function cardHasGrabSource(entity: Entity, sources: ReadonlyArray<Source>): bool
   }
   const pdf = sources.find((source) => source.id === original.sourceId);
   return pdf?.bytes instanceof Blob;
+}
+
+function safeCardFileStem(title: string): string {
+  const stem = title
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "")
+    .replace(/\s+/g, "-")
+    .slice(0, 80);
+  return stem.length > 0 ? `${stem}-card` : "card";
 }

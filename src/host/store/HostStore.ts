@@ -3,6 +3,7 @@ import {
   asCampaignId,
   asSessionId,
   newCampaignId,
+  newChunkId,
   newEntityId,
   newMediaId,
   newParticipantId,
@@ -50,7 +51,7 @@ import {
   type UrlView,
 } from "../types";
 import { migrateImportedCampaign, migrateOpenDatabase, migrationBanner, SCHEMA_VERSION } from "../persist";
-import { migrateArchivePayload, parseArchiveManifest } from "../persist/archiveMigrate";
+import { migrateArchivePayload, migrateCardArchivePayload, parseAnyArchiveManifest, parseArchiveManifest } from "../persist/archiveMigrate";
 import { emptyEncounter, foldScenesIntoEncounters } from "../persist/foldScenes";
 import { SCHEMA_META_KEY } from "../persist/schema";
 import {
@@ -82,7 +83,9 @@ import {
   packArchiveZip,
   unpackArchiveZip,
   ARCHIVE_FORMAT,
+  CARD_ARCHIVE_FORMAT,
   type ArchiveData,
+  type CardArchiveData,
 } from "../../lib/archive";
 import { createCatalog, rebuildCatalog, searchCatalog } from "../search/catalog";
 import {
@@ -91,12 +94,13 @@ import {
   mediaBlocksFrom,
   mediaFrom,
   newTrack,
+  provenanceFrom,
   replaceTracks,
   textFrom,
   tracksFrom,
   withFacts,
   withMedia,
-  withoutMedia,
+  withoutMediaId,
   withCategory,
   withProvenance,
   withSecret,
@@ -108,6 +112,7 @@ import { openExternalTab } from "../../lib/iframeEmbed";
 import { localNpcCard } from "../../lib/names";
 import {
   completeJson,
+  editImagePng,
   generateImagePng,
   parseGeneratedNpc,
   parseLiftedCard,
@@ -138,7 +143,7 @@ export type HostSnapshot = {
   now: NowContext;
   mediaUrls: Readonly<Record<string, string>>;
   sourceView: SourceView | null;
-  mediaViewId: MediaId | null;
+  mediaViewEntityId: EntityId | null;
   urlView: UrlView | null;
   busy: BusyStatus | null;
   lastBackupAt: IsoDateTime | null;
@@ -182,7 +187,7 @@ export class HostStore {
   private ready = false;
   private error: string | null = null;
   private sourceView: SourceView | null = null;
-  private mediaViewId: MediaId | null = null;
+  private mediaViewEntityId: EntityId | null = null;
   private urlView: UrlView | null = null;
   private busy: BusyStatus | null = null;
   private readonly sourcePageById = new Map<SourceId, number>();
@@ -419,7 +424,7 @@ export class HostStore {
   setFocus(id: EntityId | null): void {
     this.focusEntityId = id;
     this.sourceView = null;
-    this.mediaViewId = null;
+    this.mediaViewEntityId = null;
     this.urlView = null;
     if (id !== null && this.placeOnTable(id)) {
       this.run(this.persistTableCards());
@@ -432,7 +437,7 @@ export class HostStore {
     this.focusEntityId = id;
     this.openedEntityId = id;
     this.sourceView = null;
-    this.mediaViewId = null;
+    this.mediaViewEntityId = null;
     this.urlView = null;
     if (this.placeOnTable(id)) {
       this.run(this.persistTableCards());
@@ -463,7 +468,7 @@ export class HostStore {
       "recurring",
     );
     this.sourceView = null;
-    this.mediaViewId = null;
+    this.mediaViewEntityId = null;
     this.emit();
     return entity;
   }
@@ -518,12 +523,6 @@ export class HostStore {
       return;
     }
     await this.updateRunCard(id, withText(entity.runCard, raw));
-  }
-
-  async promoteEntity(id: EntityId): Promise<void> {
-    const entity = this.requireEntity(id);
-    await this.putEntity({ ...entity, lifecycle: "recurring", updatedAt: nowIso() });
-    this.emit();
   }
 
   async deleteEntity(id: EntityId): Promise<void> {
@@ -617,7 +616,7 @@ export class HostStore {
   openSourceView(sourceId: SourceId, page: number | null): void {
     this.sourceView = { sourceId, page };
     this.rememberSourcePage(sourceId, page);
-    this.mediaViewId = null;
+    this.mediaViewEntityId = null;
     this.urlView = null;
     this.emit();
   }
@@ -630,11 +629,12 @@ export class HostStore {
     this.openSourceView(sourceId, this.sourcePageById.get(sourceId) ?? 1);
   }
 
-  openMediaView(mediaId: MediaId): void {
-    if (!this.objectUrls.has(mediaId)) {
-      this.setErrorAndThrow("That picture is missing");
+  openMediaView(entityId: EntityId): void {
+    const entity = this.requireEntity(entityId);
+    if (mediaBlocksFrom(entity.runCard).length === 0) {
+      this.setErrorAndThrow(`“${entity.runCard.title}” has no pictures`);
     }
-    this.mediaViewId = mediaId;
+    this.mediaViewEntityId = entityId;
     this.sourceView = null;
     this.urlView = null;
     this.emit();
@@ -644,7 +644,7 @@ export class HostStore {
     const url = parseEntityUrl(raw);
     this.urlView = { href: url.toString() };
     this.sourceView = null;
-    this.mediaViewId = null;
+    this.mediaViewEntityId = null;
     this.emit();
   }
 
@@ -666,7 +666,7 @@ export class HostStore {
   }
 
   closeMediaView(): void {
-    this.mediaViewId = null;
+    this.mediaViewEntityId = null;
     this.emit();
   }
 
@@ -716,7 +716,7 @@ export class HostStore {
       "recurring",
     );
     this.sourceView = null;
-    this.mediaViewId = null;
+    this.mediaViewEntityId = null;
     this.emit();
     return entity;
   }
@@ -760,7 +760,7 @@ export class HostStore {
       card = withMedia(card, { kind: "media", mediaId: media.id, role: "other" });
     }
     this.sourceView = null;
-    this.mediaViewId = null;
+    this.mediaViewEntityId = null;
     this.urlView = null;
     const entity = await this.createEntity(card, "recurring");
     this.openCard(entity.id);
@@ -865,7 +865,7 @@ export class HostStore {
       );
     }
     const npcCategory = this.requireCampaign().cardCategories.includes("NPC") ? "NPC" : "";
-    const entity = await this.createEntity({ ...card, category: npcCategory }, "ephemeral");
+    const entity = await this.createEntity({ ...card, category: npcCategory }, "recurring");
     if (withPortrait) {
       this.setBusy({
         title: "Drawing a portrait",
@@ -992,20 +992,58 @@ export class HostStore {
     );
   }
 
-  async removeEntityImages(entityId: EntityId): Promise<void> {
+  async modifyEntityImage(entityId: EntityId, mediaId: MediaId, prompt: string): Promise<void> {
     const entity = this.requireEntity(entityId);
-    const mediaIds = mediaBlocksFrom(entity.runCard).map((block) => block.mediaId);
-    if (mediaIds.length === 0) {
-      return;
+    if (!mediaBlocksFrom(entity.runCard).some((block) => block.mediaId === mediaId)) {
+      this.setErrorAndThrow(`Card “${entity.runCard.title}” does not have that picture`);
     }
-    await this.updateRunCard(entityId, withoutMedia(entity.runCard));
-    for (const mediaId of mediaIds) {
-      await this.deleteMedia(mediaId);
+    const source = this.media.find((item) => item.id === mediaId);
+    if (!source) {
+      this.setErrorAndThrow("That picture is missing");
     }
-    if (this.mediaViewId !== null && mediaIds.includes(this.mediaViewId)) {
-      this.mediaViewId = null;
+    const instructions = prompt.trim();
+    if (instructions.length === 0) {
+      this.setErrorAndThrow("Modification instructions are empty");
     }
-    if (this.encounter?.mapMediaId !== null && this.encounter && mediaIds.includes(this.encounter.mapMediaId)) {
+    this.setBusy({
+      title: "Modifying the picture",
+      detail: `The image model is rewriting “${entity.runCard.title}” from your instructions.`,
+    });
+    try {
+      const blob = await editImagePng(this.requireOpenRouter(), instructions, source.bytes);
+      const media: MediaRecord = {
+        id: newMediaId(),
+        campaignId: entity.campaignId,
+        mimeType: blob.type || "image/png",
+        role: "other",
+        bytes: blob,
+      };
+      await this.putMedia(media);
+      await this.updateRunCard(
+        entityId,
+        withMedia(this.requireEntity(entityId).runCard, {
+          kind: "media",
+          mediaId: media.id,
+          role: "other",
+        }),
+      );
+    } finally {
+      this.setBusy(null);
+    }
+  }
+
+  async removeEntityImage(entityId: EntityId, mediaId: MediaId): Promise<void> {
+    const entity = this.requireEntity(entityId);
+    if (!mediaBlocksFrom(entity.runCard).some((block) => block.mediaId === mediaId)) {
+      this.setErrorAndThrow(`Card “${entity.runCard.title}” does not have that picture`);
+    }
+    await this.updateRunCard(entityId, withoutMediaId(entity.runCard, mediaId));
+    await this.deleteMedia(mediaId);
+    const remaining = mediaBlocksFrom(this.requireEntity(entityId).runCard);
+    if (remaining.length === 0 && this.mediaViewEntityId === entityId) {
+      this.mediaViewEntityId = null;
+    }
+    if (this.encounter?.mapMediaId === mediaId) {
       await this.setEncounterMap(null);
       return;
     }
@@ -1544,6 +1582,203 @@ export class HostStore {
     }
   }
 
+  async exportCardArchive(entityId: EntityId): Promise<Blob> {
+    const entity = this.requireEntity(entityId);
+    this.setBusy({
+      title: "Exporting card",
+      detail: `Packing “${entity.runCard.title}” into a ZIP.`,
+    });
+    try {
+      const mediaIds = new Set(mediaBlocksFrom(entity.runCard).map((block) => block.mediaId));
+      const provenance = provenanceFrom(entity.runCard);
+      const sourceIds = new Set<SourceId>();
+      if (provenance !== null) {
+        sourceIds.add(provenance.sourceId);
+      }
+
+      const mediaMeta = [];
+      const mediaBytes = new Map<MediaId, Uint8Array>();
+      for (const mediaId of mediaIds) {
+        const record = this.media.find((item) => item.id === mediaId);
+        if (!record) {
+          this.setErrorAndThrow(`Card image ${mediaId} is missing`);
+        }
+        mediaMeta.push({
+          id: record.id,
+          campaignId: record.campaignId,
+          mimeType: record.mimeType,
+          role: record.role,
+        });
+        mediaBytes.set(record.id, await blobToUint8Array(record.bytes));
+      }
+
+      const sourcesMeta = [];
+      const sourceBytes = new Map<SourceId, Uint8Array>();
+      const chunks: SourceChunk[] = [];
+      for (const sourceId of sourceIds) {
+        const source = this.sources.find((item) => item.id === sourceId);
+        if (!source) {
+          continue;
+        }
+        sourcesMeta.push({
+          id: source.id,
+          campaignId: source.campaignId,
+          title: source.title,
+          kind: source.kind,
+          createdAt: source.createdAt,
+          mimeType: source.mimeType,
+          hasFile: source.bytes instanceof Blob,
+        });
+        if (source.bytes instanceof Blob) {
+          sourceBytes.set(source.id, await blobToUint8Array(source.bytes));
+        }
+        for (const chunk of this.chunks) {
+          if (chunk.sourceId === sourceId) {
+            chunks.push(chunk);
+          }
+        }
+      }
+
+      const detached: Entity = {
+        ...entity,
+        sessionId: null,
+      };
+      const data: CardArchiveData = {
+        schemaVersion: SCHEMA_VERSION,
+        entity: detached,
+        media: mediaMeta,
+        sources: sourcesMeta,
+        chunks,
+      };
+
+      return packArchiveZip({
+        manifest: {
+          format: CARD_ARCHIVE_FORMAT,
+          schemaVersion: SCHEMA_VERSION,
+          exportedAt: nowIso(),
+        },
+        data,
+        mediaBytes,
+        sourceBytes,
+      });
+    } finally {
+      this.setBusy(null);
+    }
+  }
+
+  async peekArchiveKind(blob: Blob): Promise<"full" | "card"> {
+    const unpacked = unpackArchiveZip(await blob.arrayBuffer());
+    const manifest = parseAnyArchiveManifest(unpacked.manifest);
+    return manifest.format === CARD_ARCHIVE_FORMAT ? "card" : "full";
+  }
+
+  async importCardArchive(blob: Blob): Promise<void> {
+    this.setBusy({
+      title: "Importing card",
+      detail: "Reading the card ZIP and adding it to this campaign.",
+    });
+    try {
+      const campaignId = this.requireCampaignId();
+      const unpacked = unpackArchiveZip(await blob.arrayBuffer());
+      const manifest = parseAnyArchiveManifest(unpacked.manifest);
+      if (manifest.format !== CARD_ARCHIVE_FORMAT) {
+        this.setErrorAndThrow("This ZIP is a full archive. Use Load all with confirmation to replace everything.");
+      }
+      const migrated = migrateCardArchivePayload(
+        unpacked.data,
+        unpacked.mediaFiles,
+        unpacked.sourceFiles,
+        manifest.schemaVersion,
+      );
+      if (migrated.warnings.length > 0) {
+        this.error = formatMigrationWarnings(migrated.warnings);
+      }
+
+      const mediaIdMap = new Map<MediaId, MediaId>();
+      for (const record of migrated.media) {
+        mediaIdMap.set(record.id, newMediaId());
+      }
+      const sourceIdMap = new Map<SourceId, SourceId>();
+      for (const source of migrated.sources) {
+        sourceIdMap.set(source.id, newSourceId());
+      }
+
+      const db = this.requireDb();
+      for (const record of migrated.media) {
+        const nextId = mediaIdMap.get(record.id);
+        if (!nextId) {
+          this.setErrorAndThrow(`Media remap missing for ${record.id}`);
+        }
+        const next: MediaRecord = {
+          ...record,
+          id: nextId,
+          campaignId,
+        };
+        await this.putMedia(next);
+      }
+      for (const source of migrated.sources) {
+        const nextId = sourceIdMap.get(source.id);
+        if (!nextId) {
+          this.setErrorAndThrow(`Source remap missing for ${source.id}`);
+        }
+        const next: Source = {
+          ...source,
+          id: nextId,
+          campaignId,
+        };
+        await db.put("sources", next);
+        this.sources = [...this.sources.filter((item) => item.id !== next.id), next];
+      }
+      for (const chunk of migrated.data.chunks) {
+        const nextSourceId = sourceIdMap.get(chunk.sourceId);
+        if (!nextSourceId) {
+          continue;
+        }
+        const next: SourceChunk = {
+          ...chunk,
+          id: newChunkId(),
+          sourceId: nextSourceId,
+        };
+        await db.put("chunks", next);
+        this.chunks = [...this.chunks, next];
+      }
+
+      const category = migrated.data.entity.runCard.category.trim();
+      if (category.length > 0) {
+        const campaign = this.requireCampaign();
+        if (!campaign.cardCategories.includes(category)) {
+          const updated: Campaign = {
+            ...campaign,
+            cardCategories: [...campaign.cardCategories, category],
+          };
+          await db.put("campaigns", updated);
+          this.campaigns = this.campaigns.map((item) => (item.id === updated.id ? updated : item));
+        }
+      }
+
+      const remappedCard = remapCardRefs(migrated.data.entity.runCard, mediaIdMap, sourceIdMap);
+      const entity: Entity = {
+        ...migrated.data.entity,
+        id: newEntityId(),
+        campaignId,
+        sessionId: this.currentSessionId,
+        runCard: remappedCard,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      };
+      await this.putEntity(entity);
+      this.reindex();
+      this.focusEntityId = entity.id;
+      this.openedEntityId = entity.id;
+      this.placeOnTable(entity.id);
+      await this.persistTableCards();
+      this.markDirty();
+      this.emit();
+    } finally {
+      this.setBusy(null);
+    }
+  }
+
   async importAllArchive(blob: Blob): Promise<void> {
     this.setBusy({
       title: "Loading archive",
@@ -1632,7 +1867,7 @@ export class HostStore {
       }
 
       this.sourceView = null;
-      this.mediaViewId = null;
+      this.mediaViewEntityId = null;
       this.urlView = null;
       this.openedEntityId = null;
       this.sourcePageById.clear();
@@ -2356,7 +2591,7 @@ export class HostStore {
       },
       mediaUrls,
       sourceView: this.sourceView,
-      mediaViewId: this.mediaViewId,
+      mediaViewEntityId: this.mediaViewEntityId,
       urlView: this.urlView,
       busy: this.busy,
       lastBackupAt: this.lastBackupAt,
@@ -2374,6 +2609,34 @@ export class HostStore {
       this.scheduleBackup();
     }
   }
+}
+
+function remapCardRefs(
+  card: RunCard,
+  mediaIdMap: ReadonlyMap<MediaId, MediaId>,
+  sourceIdMap: ReadonlyMap<SourceId, SourceId>,
+): RunCard {
+  const blocks = [];
+  for (const block of card.blocks) {
+    if (block.kind === "media") {
+      const nextId = mediaIdMap.get(block.mediaId);
+      if (!nextId) {
+        throw new Error(`Card references missing image ${block.mediaId}`);
+      }
+      blocks.push({ ...block, mediaId: nextId });
+      continue;
+    }
+    if (block.kind === "provenance") {
+      const nextId = sourceIdMap.get(block.sourceId);
+      if (!nextId) {
+        continue;
+      }
+      blocks.push({ ...block, sourceId: nextId });
+      continue;
+    }
+    blocks.push(block);
+  }
+  return { ...card, blocks };
 }
 
 function isMapCard(entity: Entity): boolean {

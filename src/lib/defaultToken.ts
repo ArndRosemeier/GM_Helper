@@ -1,4 +1,4 @@
-import { mediaBlocksFrom, mediaFrom } from "../host/runCard";
+import { firstMediaBlock } from "../host/runCard";
 import type { Entity } from "../host/types";
 
 export function defaultTokenDataUrl(label: string, seed: string): string {
@@ -19,12 +19,7 @@ export function cardImageUrl(
   entity: Entity,
   mediaUrls: Readonly<Record<string, string>>,
 ): string | null {
-  const token = mediaFrom(entity.runCard, "token");
-  const portrait = mediaFrom(entity.runCard, "portrait");
-  const extra = mediaBlocksFrom(entity.runCard).find(
-    (block) => block.role !== "token" && block.role !== "portrait",
-  );
-  const block = token ?? portrait ?? extra ?? null;
+  const block = firstMediaBlock(entity.runCard);
   if (!block) {
     return null;
   }

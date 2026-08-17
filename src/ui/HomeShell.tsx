@@ -22,7 +22,7 @@ export function HomeShell() {
           ) : (
             <CardStack />
           )}
-          {snap.mediaViewId ? <MediaViewer /> : null}
+          {snap.mediaViewEntityId ? <MediaViewer /> : null}
         </div>
         <AmbientStrip />
       </main>
