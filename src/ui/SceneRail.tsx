@@ -10,15 +10,13 @@ export function SceneRail() {
   const [sessionTitle, setSessionTitle] = useState("");
 
   const saveAll = (): void => {
+    // UI "Campaign" is the selected session; Campaign.name is the legacy workspace label.
+    const defaultName = `${safeArchiveFileStem(snap.session?.title ?? "global")}-all.zip`;
     store.run(
-      saveBlobAsFile(
-        () => store.exportAllArchive(),
-        `${snap.campaign?.name ?? "gm-helper"}-all.zip`,
-        {
-          description: "GM Helper archive",
-          accept: { "application/zip": [".zip"] },
-        },
-      ).then((result) => {
+      saveBlobAsFile(() => store.exportAllArchive(), defaultName, {
+        description: "GM Helper archive",
+        accept: { "application/zip": [".zip"] },
+      }).then((result) => {
         if (result === "cancelled") {
           return;
         }
@@ -157,4 +155,13 @@ export function SceneRail() {
       <SomeoneHere />
     </aside>
   );
+}
+
+function safeArchiveFileStem(name: string): string {
+  const stem = name
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "")
+    .replace(/\s+/g, "-")
+    .slice(0, 80);
+  return stem.length > 0 ? stem : "global";
 }

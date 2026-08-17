@@ -2,8 +2,13 @@ import { useEffect, useState } from "react";
 import { useHost } from "../host/HostContext";
 import { extractPdfImagePng, type PdfPageImage } from "../lib/pdfImages";
 import { loadPdf, type LoadedPdf } from "../lib/pdfPage";
+import { NameCardModal } from "./NameCardModal";
 import { PdfPageNav } from "./PdfPageNav";
 import { PdfPageView } from "./PdfPageView";
+
+type PendingSave =
+  | { kind: "page"; picture: PdfPageImage | null }
+  | { kind: "image"; image: PdfPageImage };
 
 export function SourceViewer() {
   const { store, snap } = useHost();
@@ -14,6 +19,7 @@ export function SourceViewer() {
   const [textBody, setTextBody] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<PdfPageImage | null>(null);
   const [viewPage, setViewPage] = useState(view?.page ?? 1);
+  const [pending, setPending] = useState<PendingSave | null>(null);
 
   const source = view ? (snap.sources.find((item) => item.id === view.sourceId) ?? null) : null;
   const sourceId = source?.id ?? null;
@@ -84,38 +90,54 @@ export function SourceViewer() {
     return null;
   }
 
-  const saveCard = (): void => {
-    if (!source) {
-      store.setError("That source is gone");
+  const confirmSave = (name: string): void => {
+    if (!source || pending === null) {
+      store.setError("Nothing to save");
       return;
     }
-    if (source.kind === "pdf" && selectedImage !== null) {
+    if (pending.kind === "image") {
       if (!pdf) {
         store.setError("PDF page is not on screen yet");
         return;
       }
       const page = viewPage;
-      const image = selectedImage;
+      const image = pending.image;
+      const document = pdf.document;
+      setPending(null);
+      store.run(
+        (async () => {
+          const picture = await extractPdfImagePng(await document.getPage(page), image.objectName);
+          await store.savePdfImageAsCard(picture, name);
+        })(),
+      );
+      return;
+    }
+    const pagePicture = pending.picture;
+    setPending(null);
+    if (source.kind === "pdf" && pagePicture !== null) {
+      if (!pdf) {
+        store.setError("PDF page is not on screen yet");
+        return;
+      }
+      const page = viewPage;
       const document = pdf.document;
       store.run(
         (async () => {
-          let picture: Blob | null = null;
-          try {
-            picture = await extractPdfImagePng(await document.getPage(page), image.objectName);
-          } catch (error: unknown) {
-            store.report(error);
-          }
-          await store.saveSourcePageAsCard(source.id, page, picture);
+          const picture = await extractPdfImagePng(
+            await document.getPage(page),
+            pagePicture.objectName,
+          );
+          await store.saveSourcePageAsCard(source.id, page, picture, name);
         })(),
       );
       return;
     }
     if (source.kind === "image" && source.bytes) {
-      store.run(store.saveSourcePageAsCard(source.id, null, source.bytes));
+      store.run(store.saveSourcePageAsCard(source.id, null, source.bytes, name));
       return;
     }
     store.run(
-      store.saveSourcePageAsCard(source.id, source.kind === "pdf" ? viewPage : null, null),
+      store.saveSourcePageAsCard(source.id, source.kind === "pdf" ? viewPage : null, null, name),
     );
   };
 
@@ -131,13 +153,29 @@ export function SourceViewer() {
           />
         ) : null}
         <div className="card-actions source-save-row">
-          <button
-            type="button"
-            title="You can select a picture on this page to become the picture for this card."
-            onClick={saveCard}
-          >
+          <button type="button" onClick={() => setPending({ kind: "page", picture: selectedImage })}>
             Add card
           </button>
+          {source?.kind === "pdf" ? (
+            <button
+              type="button"
+              disabled={selectedImage === null}
+              title={
+                selectedImage === null
+                  ? "Select a picture on this page first"
+                  : "Make a card from the selected picture only"
+              }
+              onClick={() => {
+                if (selectedImage === null) {
+                  store.setError("Select a picture on this page first");
+                  return;
+                }
+                setPending({ kind: "image", image: selectedImage });
+              }}
+            >
+              Add image card
+            </button>
+          ) : null}
           <button type="button" onClick={() => store.closeSourceView()}>
             Close
           </button>
@@ -158,6 +196,14 @@ export function SourceViewer() {
         <iframe className="source-frame" title={source.title} src={htmlUrl} sandbox="allow-same-origin" />
       ) : null}
       {imageUrl ? <img className="source-image" src={imageUrl} alt={source?.title ?? ""} /> : null}
+      {pending !== null ? (
+        <NameCardModal
+          title={pending.kind === "image" ? "Name this image card" : "Name this card"}
+          confirmLabel={pending.kind === "image" ? "Add image card" : "Add card"}
+          onCancel={() => setPending(null)}
+          onConfirm={confirmSave}
+        />
+      ) : null}
     </section>
   );
 }

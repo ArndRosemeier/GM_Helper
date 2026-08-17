@@ -220,6 +220,26 @@ h3 {
   height: 100%;
 }
 
+.card-stack-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+}
+
+.card-stack-toolbar .category-filter-bar {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.card-sort-by-name {
+  margin: 0;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 .category-filter-bar {
   display: flex;
   flex-wrap: wrap;
@@ -842,6 +862,40 @@ h3 {
 
 .busy-modal-card h2 {
   margin: 0 0 10px;
+}
+
+.name-card-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 8, 6, 0.72);
+}
+
+.name-card-modal-card {
+  width: min(440px, 100%);
+  display: grid;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 22px;
+}
+
+.name-card-modal-card h2 {
+  margin: 0;
+}
+
+.name-card-modal-card label {
+  display: grid;
+  gap: 6px;
+}
+
+.name-card-modal-card input {
+  width: 100%;
 }
 
 .search-label span,

@@ -36,8 +36,6 @@ import {
   type EncounterParticipant,
   type EncounterState,
   type Entity,
-  type IsoDateTime,
-  type LogEntry,
   type MediaRecord,
   type NowContext,
   type RunCard,
@@ -103,6 +101,7 @@ import {
   withProvenance,
   withSecret,
   withText,
+  emptyRunCard,
 } from "../runCard";
 import { ingestFile } from "../../lib/ingest";
 import { parseEntityUrl, titleFromEntityUrl } from "../../lib/entityUrl";
@@ -170,7 +169,6 @@ export class HostStore {
   private sessions: Session[] = [];
   private sources: Source[] = [];
   private chunks: SourceChunk[] = [];
-  private logEntries: LogEntry[] = [];
   private media: MediaRecord[] = [];
   private encounter: EncounterState | null = null;
   private settings: AppSettings = DEFAULT_SETTINGS;
@@ -190,7 +188,6 @@ export class HostStore {
   private readonly sourcePageById = new Map<SourceId, number>();
   private snapshot: HostSnapshot = this.createSnapshot();
   private booting: Promise<void> | null = null;
-  private dataDirty = false;
   private categoryFilters: string[] = [];
   private addCategory = "";
 
@@ -313,14 +310,12 @@ export class HostStore {
     this.currentSessionId = id;
     await this.requireDb().put("meta", id, META_SESSION);
     this.encounter = (await this.requireDb().get("encounters", id)) ?? null;
-    this.logEntries = await this.requireDb().getAllFromIndex("logEntries", "sessionId", id);
     this.emit();
   }
 
   async clearSession(): Promise<void> {
     this.currentSessionId = null;
     this.encounter = null;
-    this.logEntries = [];
     await this.requireDb().put("meta", "", META_SESSION);
     this.emit();
   }
@@ -674,7 +669,12 @@ export class HostStore {
     sourceId: SourceId,
     page: number | null,
     picture: Blob | null,
+    titleRaw: string,
   ): Promise<Entity> {
+    const title = titleRaw.trim();
+    if (title.length === 0) {
+      this.setErrorAndThrow("Card name is empty");
+    }
     const source = this.sources.find((item) => item.id === sourceId);
     if (!source) {
       this.setErrorAndThrow(`Source ${sourceId} is missing`);
@@ -684,17 +684,18 @@ export class HostStore {
         ? this.chunks.find((item) => item.sourceId === sourceId)
         : (this.chunks.find((item) => item.sourceId === sourceId && item.page === page) ??
           this.chunks.find((item) => item.sourceId === sourceId));
-    const title = chunk?.heading ?? (page === null ? source.title : `${source.title} p.${String(page)}`);
-    const text = chunk?.text.slice(0, 600) ?? title;
+    const text = chunk?.text.slice(0, 600) ?? "";
     const tags = source.kind === "pdf" || source.kind === "image" ? [source.kind] : [];
     let card = withProvenance(
-      withText({ title, tags, category: "", blocks: [] }, text),
+      text.length > 0
+        ? withText({ title, tags, category: "", blocks: [] }, text)
+        : { title, tags, category: "", blocks: [] },
       {
         kind: "provenance",
         sourceId,
         page,
         url: null,
-        excerpt: text.slice(0, 240),
+        excerpt: (text.length > 0 ? text : title).slice(0, 240),
       },
     );
     if (picture !== null) {
@@ -716,9 +717,36 @@ export class HostStore {
     return entity;
   }
 
+  async savePdfImageAsCard(picture: Blob, titleRaw: string): Promise<Entity> {
+    const title = titleRaw.trim();
+    if (title.length === 0) {
+      this.setErrorAndThrow("Card name is empty");
+    }
+    const media: MediaRecord = {
+      id: newMediaId(),
+      campaignId: this.requireCampaignId(),
+      mimeType: picture.type || "image/png",
+      role: "other",
+      bytes: picture,
+    };
+    await this.putMedia(media);
+    // Free-text card: picture only, no PDF provenance / pdf tag.
+    const card = withMedia(emptyRunCard(title), {
+      kind: "media",
+      mediaId: media.id,
+      role: "other",
+    });
+    this.sourceView = null;
+    this.mediaViewEntityId = null;
+    this.urlView = null;
+    const entity = await this.createEntity(card, "recurring");
+    this.openCard(entity.id);
+    return entity;
+  }
+
   async saveChunkAsCard(chunkId: ChunkId): Promise<Entity> {
     const chunk = this.requireChunk(chunkId);
-    return this.saveSourcePageAsCard(chunk.sourceId, chunk.page, null);
+    return this.saveSourcePageAsCard(chunk.sourceId, chunk.page, null, chunk.heading);
   }
 
   async liftChunk(chunkId: ChunkId): Promise<Entity> {
@@ -2056,7 +2084,6 @@ export class HostStore {
     if (metaSession === "") {
       this.currentSessionId = null;
       this.encounter = null;
-      this.logEntries = [];
     } else if (
       typeof metaSession === "string" &&
       metaSession.length > 0 &&
@@ -2075,7 +2102,7 @@ export class HostStore {
         };
         await this.putEncounter(this.encounter);
       }
-      this.logEntries = readStored(
+      readStored(
         await db.getAllFromIndex("logEntries", "sessionId", this.currentSessionId),
         readLogEntry,
         warnings,
@@ -2095,7 +2122,7 @@ export class HostStore {
           };
           await this.putEncounter(this.encounter);
         }
-        this.logEntries = readStored(
+        readStored(
           await db.getAllFromIndex("logEntries", "sessionId", this.currentSessionId),
           readLogEntry,
           warnings,
@@ -2103,7 +2130,6 @@ export class HostStore {
         await db.put("meta", this.currentSessionId, META_SESSION);
       } else {
         this.encounter = null;
-        this.logEntries = [];
         await db.put("meta", "", META_SESSION);
       }
     }
@@ -2359,7 +2385,7 @@ export class HostStore {
   }
 
   private markDirty(): void {
-    this.dataDirty = true;
+    // Persistence is explicit; campaign backups are user-triggered.
   }
 
   private createSnapshot(): HostSnapshot {

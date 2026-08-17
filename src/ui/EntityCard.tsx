@@ -21,7 +21,15 @@ import { CardUrlFrame } from "./CardUrlFrame";
 import { TokenGrabModal } from "./TokenGrabModal";
 import { cardImageUrl } from "../lib/defaultToken";
 
-export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
+export function EntityCard({
+  entity,
+  revealSecrets,
+  expanded: expandedProp,
+  onToggleExpand,
+}: FocusCardProps & {
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+}) {
   const { store, snap } = useHost();
   const facts = factsFrom(entity.runCard);
   const tracks = tracksFrom(entity.runCard);
@@ -29,7 +37,9 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
   const text = textFrom(entity.runCard);
   const pictures = mediaBlocksFrom(entity.runCard);
   const original = cardOriginal(entity, snap.sources);
-  const [expanded, setExpanded] = useState(entity.id === snap.openedEntityId);
+  const controlled = expandedProp !== undefined;
+  const [expandedLocal, setExpandedLocal] = useState(entity.id === snap.openedEntityId);
+  const expanded = controlled ? expandedProp : expandedLocal;
   const [secretOpen, setSecretOpen] = useState(revealSecrets);
   const [titleDraft, setTitleDraft] = useState(entity.runCard.title);
   const [textDraft, setTextDraft] = useState(text);
@@ -44,10 +54,13 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
   const clipboardHasImage = useClipboardHasImage(expanded);
 
   useEffect(() => {
-    if (snap.openedEntityId === entity.id) {
-      setExpanded(true);
+    if (controlled) {
+      return;
     }
-  }, [snap.openedEntityId, entity.id]);
+    if (snap.openedEntityId === entity.id) {
+      setExpandedLocal(true);
+    }
+  }, [snap.openedEntityId, entity.id, controlled]);
 
   useEffect(() => {
     setTitleDraft(entity.runCard.title);
@@ -75,7 +88,11 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
               return;
             }
             store.setFocus(entity.id);
-            setExpanded((open) => !open);
+            if (onToggleExpand) {
+              onToggleExpand();
+            } else {
+              setExpandedLocal((open) => !open);
+            }
           }}
         >
           <div>

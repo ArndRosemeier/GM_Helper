@@ -13,7 +13,6 @@ import {
   type OpenRouterListedModel,
   type OpenRouterModelCatalog,
 } from "../lib/openrouter";
-import { featureRegistry } from "../host/features/singleton";
 
 type OpenRouterDraft = {
   apiKey: string;
@@ -158,43 +157,6 @@ export function SettingsView() {
         />
         <button type="button" onClick={saveOpenRouter}>
           Save OpenRouter
-        </button>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={snap.settings.allowCampaignContext}
-            onChange={(event) =>
-              store.run(
-                store.applySettingsPatch({
-                  field: "allowCampaignContext",
-                  value: event.target.checked,
-                }),
-              )
-            }
-          />
-          Allow campaign context in prompts
-        </label>
-        <ul className="task-list">
-          {featureRegistry.aiTasks.map((task) => (
-            <li key={task.id}>
-              {task.label} {task.tableAllowed ? "(table ok)" : "(prep)"}
-            </li>
-          ))}
-        </ul>
-      </section>
-      <section>
-        <h2>Campaigns</h2>
-        <ul>
-          {snap.campaigns.map((campaign) => (
-            <li key={campaign.id}>
-              <button type="button" onClick={() => store.run(store.selectCampaign(campaign.id))}>
-                {campaign.name}
-              </button>
-            </li>
-          ))}
-        </ul>
-        <button type="button" onClick={() => store.run(store.createCampaign("New campaign"))}>
-          New campaign
         </button>
       </section>
     </div>

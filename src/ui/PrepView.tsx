@@ -19,11 +19,11 @@ export function PrepView() {
       <section>
         <h2>Sources</h2>
         <p className="muted">
-          Feed a module PDF, markdown, HTML, or an image. Open a source to grab a picture onto a card.
+          Feed a module PDF. Open a source to grab a picture onto a card.
         </p>
         <input
           type="file"
-          accept=".pdf,.md,.txt,.html,.htm,image/*"
+          accept=".pdf,application/pdf"
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (!file) {

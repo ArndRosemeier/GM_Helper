@@ -6,8 +6,8 @@ export const ingestFeature: FeatureModule = {
   register(registry) {
     registry.registerIngest({
       id: "files",
-      label: "Files (PDF, Markdown, HTML, image)",
-      accept: [".pdf", ".md", ".txt", ".html", ".htm", "image/*"],
+      label: "PDF",
+      accept: [".pdf", "application/pdf"],
       ingest: async (file) => {
         await hostStore.ingestUserFile(file);
       },
