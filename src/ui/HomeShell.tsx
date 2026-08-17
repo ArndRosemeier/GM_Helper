@@ -1,20 +1,17 @@
 import { AmbientStrip } from "./AmbientStrip";
 import { CardStack } from "./CardStack";
-import { PinnedFacts } from "./PinnedFacts";
 import { SceneRail } from "./SceneRail";
 import { SearchTray } from "./SearchTray";
-import { SessionLog } from "./SessionLog";
-import { SomeoneHere } from "./SomeoneHere";
 import { featureRegistry } from "../host/features/singleton";
 import { MediaViewer } from "./MediaViewer";
 import { SourceViewer } from "./SourceViewer";
 import { UrlViewer } from "./UrlViewer";
 import { useHost } from "../host/HostContext";
 
-export function RunShell() {
+export function HomeShell() {
   const { snap } = useHost();
   return (
-    <div className="run-shell">
+    <div className="home-shell">
       <SceneRail />
       <main className="now">
         <div className="now-stage">
@@ -22,19 +19,15 @@ export function RunShell() {
             <UrlViewer />
           ) : snap.sourceView ? (
             <SourceViewer />
-          ) : snap.mediaViewId ? (
-            <MediaViewer />
           ) : (
             <CardStack />
           )}
+          {snap.mediaViewId ? <MediaViewer /> : null}
         </div>
         <AmbientStrip />
       </main>
       <aside className="edge">
         <SearchTray />
-        <PinnedFacts />
-        <SomeoneHere />
-        <SessionLog />
         {featureRegistry.rails.map((entry) => {
           const Section = entry.component;
           return (

@@ -11,8 +11,6 @@ export type AppSettings = {
   surfaceLock: SurfaceLock;
   startEncounterOnFlat: boolean;
   allowCampaignContext: boolean;
-  webSearchPrefix: string;
-  findWeb: boolean;
 };
 
 export type SettingsPatch = {
@@ -65,17 +63,6 @@ function requireBooleanField(record: Record<string, unknown>, field: string): bo
   return value;
 }
 
-function optionalStringField(record: Record<string, unknown>, field: string, fallback: string): string {
-  if (!(field in record) || record[field] === undefined) {
-    return fallback;
-  }
-  const value = record[field];
-  if (typeof value !== "string") {
-    throw new Error(`Settings.${field} must be a string`);
-  }
-  return value;
-}
-
 function optionalBooleanField(record: Record<string, unknown>, field: string, fallback: boolean): boolean {
   if (!(field in record) || record[field] === undefined) {
     return fallback;
@@ -98,8 +85,6 @@ export function parseAppSettings(value: unknown): AppSettings {
     surfaceLock: parseStoredSurfaceLock(record.surfaceLock),
     startEncounterOnFlat: optionalBooleanField(record, "startEncounterOnFlat", false),
     allowCampaignContext: optionalBooleanField(record, "allowCampaignContext", false),
-    webSearchPrefix: optionalStringField(record, "webSearchPrefix", ""),
-    findWeb: optionalBooleanField(record, "findWeb", false),
   };
 }
 
@@ -145,8 +130,6 @@ export const DEFAULT_SETTINGS: AppSettings = parseAppSettings({
   surfaceLock: "auto",
   startEncounterOnFlat: false,
   allowCampaignContext: false,
-  webSearchPrefix: "",
-  findWeb: false,
 });
 
 export const SURFACE_LOCK_LABEL: Record<SurfaceLock, string> = {

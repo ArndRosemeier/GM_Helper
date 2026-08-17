@@ -9,7 +9,6 @@ export type LogEntryId = string & { readonly __brand: "LogEntryId" };
 export type TrackId = string & { readonly __brand: "TrackId" };
 export type TokenId = string & { readonly __brand: "TokenId" };
 export type ParticipantId = string & { readonly __brand: "ParticipantId" };
-export type FactPinId = string & { readonly __brand: "FactPinId" };
 
 function brand<T extends string>(value: string): T {
   return value as T;
@@ -30,7 +29,6 @@ export const newLogEntryId = (): LogEntryId => fresh<LogEntryId>();
 export const newTrackId = (): TrackId => fresh<TrackId>();
 export const newTokenId = (): TokenId => fresh<TokenId>();
 export const newParticipantId = (): ParticipantId => fresh<ParticipantId>();
-export const newFactPinId = (): FactPinId => fresh<FactPinId>();
 
 export const asCampaignId = (value: string): CampaignId => brand<CampaignId>(value);
 export const asEntityId = (value: string): EntityId => brand<EntityId>(value);
@@ -43,4 +41,3 @@ export const asLogEntryId = (value: string): LogEntryId => brand<LogEntryId>(val
 export const asTrackId = (value: string): TrackId => brand<TrackId>(value);
 export const asTokenId = (value: string): TokenId => brand<TokenId>(value);
 export const asParticipantId = (value: string): ParticipantId => brand<ParticipantId>(value);
-export const asFactPinId = (value: string): FactPinId => brand<FactPinId>(value);

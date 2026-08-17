@@ -1,6 +1,6 @@
 import { HostProvider, useHost } from "./host/HostContext";
 import { usePosture } from "./ui/usePosture";
-import { RunShell } from "./ui/RunShell";
+import { HomeShell } from "./ui/HomeShell";
 import { PrepView } from "./ui/PrepView";
 import { SettingsView } from "./ui/SettingsView";
 import { BusyModal } from "./ui/BusyModal";
@@ -38,7 +38,7 @@ function Surfaces() {
   }
 
   const body =
-    snap.mode === "prep" ? <PrepView /> : snap.mode === "settings" ? <SettingsView /> : <RunShell />;
+    snap.mode === "prep" ? <PrepView /> : snap.mode === "settings" ? <SettingsView /> : <HomeShell />;
 
   return (
     <div className="gm-root">

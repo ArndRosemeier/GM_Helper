@@ -1,14 +1,14 @@
 import { useState } from "react";
+import { cardTypeLabel } from "../host/cardModel";
 import { SCHEMA_VERSION } from "../host/persist";
 import { useHost } from "../host/HostContext";
 import { emptyRunCard } from "../host/runCard";
+import { asSessionId } from "../host/ids";
 import { BattlegroundPrep } from "./TableSurface";
 import { EncounterDetail } from "./EncounterPanel";
 import { MediaViewer } from "./MediaViewer";
 import { SourceViewer } from "./SourceViewer";
 import { UrlViewer } from "./UrlViewer";
-import { asSessionId } from "../host/ids";
-import { AddUrlEntity } from "./AddUrlEntity";
 
 export function PrepView() {
   const { store, snap } = useHost();
@@ -18,12 +18,13 @@ export function PrepView() {
   return (
     <div className="prep">
       <header className="prep-bar">
-        <button type="button" onClick={() => store.setMode("run")}>
-          Back to run
+        <button type="button" onClick={() => store.setMode("home")}>
+          Back to Home
         </button>
-        <h1>Prep</h1>
+        <h1>Docs</h1>
       </header>
-      {snap.urlView ? <UrlViewer /> : snap.sourceView ? <SourceViewer /> : snap.mediaViewId ? <MediaViewer /> : null}
+      {snap.urlView ? <UrlViewer /> : snap.sourceView ? <SourceViewer /> : null}
+      {snap.mediaViewId ? <MediaViewer /> : null}
       <section>
         <h2>Library</h2>
         <form
@@ -42,13 +43,12 @@ export function PrepView() {
           <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New card title" />
           <button type="submit">Create</button>
         </form>
-        <AddUrlEntity />
         <ul className="library">
           {snap.entities.map((entity) => (
             <li key={entity.id} className="scene-row">
               <button type="button" onClick={() => store.openCard(entity.id)}>
                 {entity.runCard.title}
-                <em>{entity.runCard.tags.join(", ") || entity.lifecycle}</em>
+                <em>{cardTypeLabel(entity.runCard.tags)}</em>
               </button>
               <button
                 type="button"
@@ -65,7 +65,7 @@ export function PrepView() {
       <section>
         <h2>Sources</h2>
         <p className="muted">
-          Feed a module PDF, markdown, HTML, or a map image. Find opens the real page so you can grab a picture.
+          Feed a module PDF, markdown, HTML, or an image. Open a source to grab a picture onto a card.
         </p>
         <input
           type="file"
@@ -98,7 +98,7 @@ export function PrepView() {
         </ul>
       </section>
       <section>
-        <h2>Sessions</h2>
+        <h2>Campaigns</h2>
         <ul className="session-list">
           {snap.sessions.map((session) => (
             <li key={session.id} className="scene-row">
@@ -122,7 +122,7 @@ export function PrepView() {
             event.preventDefault();
             const title = sessionTitle.trim();
             if (title.length === 0) {
-              store.setError("Session title is empty");
+              store.setError("Campaign title is empty");
               return;
             }
             store.run(store.createSession(title));
@@ -132,7 +132,7 @@ export function PrepView() {
           <input
             value={sessionTitle}
             onChange={(event) => setSessionTitle(event.target.value)}
-            placeholder="New session"
+            placeholder="New campaign"
           />
           <button type="submit">Add</button>
         </form>
@@ -181,6 +181,10 @@ export function PrepView() {
             />
           </label>
         </div>
+        <p className="muted">
+          Save all / Load all (full archive with docs and images) are next to Docs on the home rail. Download JSON
+          is structure-only and omits doc files and pictures.
+        </p>
       </section>
     </div>
   );

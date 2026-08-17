@@ -1,6 +1,5 @@
-import { newTrackId, type SourceId } from "./ids";
+import { newTrackId } from "./ids";
 import type {
-  Entity,
   FactItem,
   MediaBlock,
   ProvenanceBlock,
@@ -11,8 +10,16 @@ import type {
   TracksBlock,
 } from "./types";
 
-export function emptyRunCard(title: string, tags: ReadonlyArray<string> = []): RunCard {
-  return { title, tags, blocks: [] };
+export function emptyRunCard(
+  title: string,
+  tags: ReadonlyArray<string> = [],
+  category = "",
+): RunCard {
+  return { title, tags, category, blocks: [] };
+}
+
+export function withCategory(card: RunCard, category: string): RunCard {
+  return { ...card, category };
 }
 
 export function factsFrom(card: RunCard): ReadonlyArray<FactItem> {
@@ -61,20 +68,6 @@ export function provenanceFrom(card: RunCard): ProvenanceBlock | null {
   return null;
 }
 
-export function pdfBookmarkForPage(
-  entities: ReadonlyArray<Entity>,
-  sourceId: SourceId,
-  page: number,
-): Entity | null {
-  for (const entity of entities) {
-    const provenance = provenanceFrom(entity.runCard);
-    if (provenance !== null && provenance.sourceId === sourceId && provenance.page === page) {
-      return entity;
-    }
-  }
-  return null;
-}
-
 export function textFrom(card: RunCard): string {
   return card.blocks
     .filter((block): block is Extract<RunCardBlock, { kind: "text" }> => block.kind === "text")
@@ -113,6 +106,10 @@ export function withMedia(card: RunCard, block: MediaBlock): RunCard {
     (existing) => !(existing.kind === "media" && existing.role === block.role),
   );
   return { ...card, blocks: [...without, block] };
+}
+
+export function withoutMedia(card: RunCard): RunCard {
+  return { ...card, blocks: card.blocks.filter((block) => block.kind !== "media") };
 }
 
 export function withSecret(card: RunCard, body: string): RunCard {

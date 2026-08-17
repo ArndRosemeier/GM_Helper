@@ -58,6 +58,7 @@ export function localNpcCard(): RunCard {
   return {
     title,
     tags: ["npc"],
+    category: "",
     blocks: [
       { kind: "text", body: pick(LOOKS) },
       {

@@ -134,8 +134,8 @@ export function SettingsView() {
   return (
     <div className="settings">
       <header className="prep-bar">
-        <button type="button" onClick={() => store.setMode("run")}>
-          Back to run
+        <button type="button" onClick={() => store.setMode("home")}>
+          Back to Home
         </button>
         <h1>Settings</h1>
       </header>

@@ -13,10 +13,7 @@ export function TableSurface() {
   const board = useRef<HTMLDivElement>(null);
   const camera = useBoardPanZoom(viewport);
   const scene = snap.scene;
-  const mapId =
-    snap.encounter?.live === true
-      ? snap.encounter.mapMediaId
-      : (scene?.battleground.mapMediaId ?? null);
+  const mapId = snap.encounter?.mapMediaId ?? null;
   const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
   const tokens = (
     snap.encounter?.live === true ? snap.encounter.tokens : (scene?.battleground.tokens ?? [])
@@ -229,7 +226,7 @@ export function BattlegroundPrep() {
             store.run(store.sketchBattleground())
           }
         >
-          Sketch map
+          Sketch map card
         </button>
         <button type="button" onClick={() => store.setSurface("table")}>
           Preview table

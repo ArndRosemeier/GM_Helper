@@ -58,6 +58,31 @@ export const SCHEMA_MIGRATIONS: ReadonlyArray<SchemaMigration> = [
       "A live encounter owns its own tokens, one per roster entry. Scene leftovers are not reused as extras.",
     apply: migrate3to4,
   },
+  {
+    from: 4,
+    to: 5,
+    reason: "Campaign pinned facts are removed. Fact labels are display-only again.",
+    apply: migrate4to5,
+  },
+  {
+    from: 5,
+    to: 6,
+    reason:
+      "Scene battlegrounds no longer store a map. Encounter maps come from image cards dropped on the roster.",
+    apply: migrate5to6,
+  },
+  {
+    from: 6,
+    to: 7,
+    reason: "Campaigns own card category names; each run card stores its category.",
+    apply: migrate6to7,
+  },
+  {
+    from: 7,
+    to: 8,
+    reason: "Cards belong to a session (UI campaign) or are global (sessionId null).",
+    apply: migrate7to8,
+  },
 ];
 
 export function assertMigrationChain(
@@ -180,6 +205,56 @@ async function migrate3to4(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
     const next = readEncounter(raw, warnings);
     if (next) {
       await db.put("encounters", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate4to5(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("campaigns")) {
+    const next = readCampaign(raw, warnings);
+    if (next) {
+      await db.put("campaigns", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate5to6(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("scenes")) {
+    const next = readScene(raw, warnings);
+    if (next) {
+      await db.put("scenes", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate6to7(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("campaigns")) {
+    const next = readCampaign(raw, warnings);
+    if (next) {
+      await db.put("campaigns", next);
+    }
+  }
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      await db.put("entities", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate7to8(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      await db.put("entities", next);
     }
   }
   return warnings;

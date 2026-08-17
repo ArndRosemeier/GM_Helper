@@ -2,7 +2,6 @@ import type {
   CampaignId,
   ChunkId,
   EntityId,
-  FactPinId,
   LogEntryId,
   MediaId,
   ParticipantId,
@@ -22,7 +21,7 @@ export function nowIso(): IsoDateTime {
 }
 
 export type EntityLifecycle = "ephemeral" | "recurring";
-export type AppMode = "run" | "prep" | "settings";
+export type AppMode = "home" | "prep" | "settings";
 
 export type BusyStatus = {
   title: string;
@@ -90,30 +89,42 @@ export type RunCardBlock =
 export type RunCard = {
   title: string;
   tags: ReadonlyArray<string>;
+  /** User-defined category name; empty means uncategorized. */
+  category: string;
   blocks: ReadonlyArray<RunCardBlock>;
 };
 
 export type Entity = {
   id: EntityId;
   campaignId: CampaignId;
+  /** Session (UI “campaign”) this card belongs to; null means global. */
+  sessionId: SessionId | null;
   runCard: RunCard;
   lifecycle: EntityLifecycle;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 };
 
-export type FactPin = {
-  id: FactPinId;
-  entityId: EntityId;
-  label: string;
-};
-
 export type Campaign = {
   id: CampaignId;
   name: string;
-  pinnedFacts: ReadonlyArray<FactPin>;
   createdAt: IsoDateTime;
+  /** Ordered category names available for cards in this campaign. */
+  cardCategories: ReadonlyArray<string>;
 };
+
+export const DEFAULT_CARD_CATEGORIES: ReadonlyArray<string> = [
+  "Misc",
+  "Player",
+  "NPC",
+  "Battlemap",
+];
+
+export function withDefaultCardCategories(
+  categories: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  return categories.length > 0 ? categories : [...DEFAULT_CARD_CATEGORIES];
+}
 
 export type Session = {
   id: SessionId;
@@ -133,7 +144,6 @@ export type BattlegroundToken = {
 };
 
 export type Battleground = {
-  mapMediaId: MediaId | null;
   tokens: ReadonlyArray<BattlegroundToken>;
   /** Cell size in CSS pixels. `null` hides the grid. */
   gridSize: number | null;
@@ -146,7 +156,6 @@ export const GRID_SIZE_DEFAULT = 48;
 
 export function emptyBattleground(): Battleground {
   return {
-    mapMediaId: null,
     tokens: [],
     gridSize: GRID_SIZE_DEFAULT,
     tokenSize: GRID_SIZE_DEFAULT,
@@ -185,10 +194,6 @@ export type Source = {
 export type SourceView = {
   sourceId: SourceId;
   page: number | null;
-};
-
-export type WebSearchView = {
-  query: string;
 };
 
 export type UrlView = {

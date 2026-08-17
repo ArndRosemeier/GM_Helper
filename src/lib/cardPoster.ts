@@ -82,24 +82,24 @@ export async function rasterizeCardPoster(input: CardPosterInput): Promise<Blob>
 
 export function cropImageToPng(
   image: CanvasImageSource,
-  source: { x: number; y: number; size: number },
+  source: { x: number; y: number; width: number; height: number },
 ): Promise<Blob> {
-  if (source.size < 1) {
-    throw new Error("Token crop is empty");
+  if (source.width < 1 || source.height < 1) {
+    throw new Error("Image crop is empty");
   }
   const canvas = document.createElement("canvas");
-  canvas.width = Math.round(source.size);
-  canvas.height = Math.round(source.size);
+  canvas.width = Math.round(source.width);
+  canvas.height = Math.round(source.height);
   const ctx = canvas.getContext("2d");
   if (!ctx) {
-    throw new Error("Could not open a 2D canvas for the token crop");
+    throw new Error("Could not open a 2D canvas for the image crop");
   }
   ctx.drawImage(
     image,
     source.x,
     source.y,
-    source.size,
-    source.size,
+    source.width,
+    source.height,
     0,
     0,
     canvas.width,

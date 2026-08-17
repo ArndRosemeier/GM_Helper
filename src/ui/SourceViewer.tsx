@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useHost } from "../host/HostContext";
-import { captureLoadedPdfPagePng, loadPdf, type LoadedPdf } from "../lib/pdfPage";
-import { PdfBookmarkCheck } from "./PdfBookmarkCheck";
+import { extractPdfImagePng, type PdfPageImage } from "../lib/pdfImages";
+import { loadPdf, type LoadedPdf } from "../lib/pdfPage";
+import { PdfPageNav } from "./PdfPageNav";
 import { PdfPageView } from "./PdfPageView";
 
 export function SourceViewer() {
@@ -11,12 +12,23 @@ export function SourceViewer() {
   const [htmlUrl, setHtmlUrl] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [textBody, setTextBody] = useState<string | null>(null);
+  const [pageImages, setPageImages] = useState<ReadonlyArray<PdfPageImage>>([]);
+  const [selectedImage, setSelectedImage] = useState<PdfPageImage | null>(null);
+  const [viewPage, setViewPage] = useState(view?.page ?? 1);
 
   const source = view ? (snap.sources.find((item) => item.id === view.sourceId) ?? null) : null;
-  const page = view?.page ?? 1;
   const sourceId = source?.id ?? null;
   const sourceBytes = source?.bytes ?? null;
   const sourceKind = source?.kind ?? null;
+
+  useEffect(() => {
+    setViewPage(view?.page ?? 1);
+  }, [view?.sourceId, view?.page]);
+
+  useEffect(() => {
+    setSelectedImage(null);
+    setPageImages([]);
+  }, [sourceId, viewPage]);
 
   useEffect(() => {
     if (sourceId === null || sourceBytes === null || sourceKind === null) {
@@ -74,25 +86,49 @@ export function SourceViewer() {
     return null;
   }
 
-  const capture = (role: "other" | "map"): void => {
-    if (source?.kind === "pdf") {
+  const saveCard = (): void => {
+    if (!source) {
+      store.setError("That source is gone");
+      return;
+    }
+    if (source.kind === "pdf" && selectedImage !== null) {
       if (!pdf) {
         store.setError("PDF page is not on screen yet");
         return;
       }
+      const page = viewPage;
+      const image = selectedImage;
+      const document = pdf.document;
       store.run(
-        captureLoadedPdfPagePng(pdf.document, page).then((blob) =>
-          store.saveCapturedImage(blob, `${source.title} p.${String(page)}`, role),
-        ),
+        (async () => {
+          let picture: Blob | null = null;
+          try {
+            picture = await extractPdfImagePng(await document.getPage(page), image.objectName);
+          } catch (error: unknown) {
+            store.report(error);
+          }
+          await store.saveSourcePageAsCard(source.id, page, picture);
+        })(),
       );
       return;
     }
-    if (source?.kind === "image" && source.bytes) {
-      store.run(store.saveCapturedImage(source.bytes, source.title, role));
+    if (source.kind === "image" && source.bytes) {
+      store.run(store.saveSourcePageAsCard(source.id, null, source.bytes));
       return;
     }
-    store.setError("This source cannot be captured as an image");
+    store.run(
+      store.saveSourcePageAsCard(source.id, source.kind === "pdf" ? viewPage : null, null),
+    );
   };
+
+  const pictureHint =
+    source?.kind === "pdf"
+      ? pageImages.length === 0
+        ? "no pictures in result"
+        : "Select picture for card"
+      : source?.kind === "image"
+        ? "Select picture for card"
+        : "no pictures in result";
 
   return (
     <section className="source-viewer">
@@ -102,38 +138,18 @@ export function SourceViewer() {
           <h2>{source?.title ?? "Missing source"}</h2>
         </div>
         {source?.kind === "pdf" && pdf ? (
-          <div className="inline-form">
-            <button
-              type="button"
-              disabled={page <= 1}
-              onClick={() => store.setSourceViewPage(page - 1)}
-            >
-              Prev
-            </button>
-            <span>
-              {String(page)} / {String(pdf.pageCount)}
-            </span>
-            <button
-              type="button"
-              disabled={page >= pdf.pageCount}
-              onClick={() => store.setSourceViewPage(page + 1)}
-            >
-              Next
-            </button>
-          </div>
+          <PdfPageNav
+            page={viewPage}
+            pageCount={pdf.pageCount}
+            onChange={setViewPage}
+            onCommit={(next) => store.setSourceViewPage(next)}
+          />
         ) : null}
-        <div className="card-actions">
-          {source?.kind === "pdf" ? (
-            <PdfBookmarkCheck key={String(page)} sourceId={source.id} page={page} />
-          ) : null}
-          {source?.kind !== "pdf" ? (
-            <button type="button" onClick={() => capture("other")}>
-              Save picture
-            </button>
-          ) : null}
-          <button type="button" onClick={() => capture("map")}>
-            Use as map
+        <div className="card-actions source-save-row">
+          <button type="button" onClick={saveCard}>
+            Save card
           </button>
+          <p className="muted source-picture-hint">{pictureHint}</p>
           <button type="button" onClick={() => store.closeSourceView()}>
             Close
           </button>
@@ -143,7 +159,16 @@ export function SourceViewer() {
       {source && source.bytes === null ? (
         <p className="muted">This source was ingested before files were kept. Feed the file again.</p>
       ) : null}
-      {source?.kind === "pdf" && pdf ? <PdfPageView pdf={pdf} page={page} /> : null}
+      {source?.kind === "pdf" && pdf ? (
+        <PdfPageView
+          pdf={pdf}
+          page={viewPage}
+          pickImages
+          selectedImageId={selectedImage?.id ?? null}
+          onSelectImage={setSelectedImage}
+          onImagesChange={setPageImages}
+        />
+      ) : null}
       {textBody !== null ? <pre className="source-text">{textBody}</pre> : null}
       {htmlUrl && source && source.kind !== "image" && source.kind !== "pdf" && source.kind !== "markdown" ? (
         <iframe className="source-frame" title={source.title} src={htmlUrl} sandbox="allow-same-origin" />

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { cardOriginal } from "../host/cardModel";
+import { cardOriginal, cardTypeLabel } from "../host/cardModel";
 import { useHost } from "../host/HostContext";
+import { asSessionId } from "../host/ids";
 import type { FocusCardProps } from "../host/features/types";
 import type { TrackId } from "../host/ids";
+import type { Entity, Source } from "../host/types";
 import { useCardEncounterDrag } from "./useCardEncounterDrag";
 import {
   factsFrom,
@@ -13,6 +15,7 @@ import {
   textFrom,
   tracksFrom,
 } from "../host/runCard";
+import { readClipboardImage, useClipboardHasImage } from "../lib/clipboardImage";
 import { CardPdfReader } from "./CardPdfReader";
 import { CardUrlFrame } from "./CardUrlFrame";
 import { TokenGrabModal } from "./TokenGrabModal";
@@ -26,15 +29,21 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
   const text = textFrom(entity.runCard);
   const tokenArt = mediaFrom(entity.runCard, "token");
   const pictures = mediaBlocksFrom(entity.runCard).filter((block) => block.role !== "token");
+  const showImageId = pictures[0]?.mediaId ?? tokenArt?.mediaId ?? null;
   const original = cardOriginal(entity, snap.sources);
   const [expanded, setExpanded] = useState(entity.id === snap.openedEntityId);
   const [secretOpen, setSecretOpen] = useState(revealSecrets);
   const [titleDraft, setTitleDraft] = useState(entity.runCard.title);
+  const [textDraft, setTextDraft] = useState(text);
   const [grabbing, setGrabbing] = useState(false);
+  const [removingImage, setRemovingImage] = useState(false);
   const tokenUrl = cardImageUrl(entity, snap.mediaUrls);
   const showsOriginal = original.kind === "pdf" || original.kind === "url";
+  const isTextCard = !showsOriginal && !entity.runCard.tags.includes("image");
   const focused = snap.focus?.id === entity.id;
   const drag = useCardEncounterDrag(entity.id, entity.runCard.title);
+  const canGrab = cardHasGrabSource(entity, snap.sources);
+  const clipboardHasImage = useClipboardHasImage(expanded);
 
   useEffect(() => {
     if (snap.openedEntityId === entity.id) {
@@ -46,31 +55,102 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
     setTitleDraft(entity.runCard.title);
   }, [entity.runCard.title]);
 
+  useEffect(() => {
+    setTextDraft(text);
+  }, [text]);
+
   return (
     <article
       className={`card entity-card focus-card${expanded ? "" : " compact"}${focused ? " is-focus" : ""}`}
     >
-      <button
-        type="button"
-        className="focus-toggle"
-        aria-expanded={expanded}
-        onPointerDown={drag.onPointerDown}
-        onClick={() => {
-          if (drag.consumeClick()) {
-            return;
-          }
-          store.setFocus(entity.id);
-          setExpanded((open) => !open);
-        }}
-      >
-        {tokenUrl ? <img className="card-token" src={tokenUrl} alt="" /> : null}
-        <div>
-          <p className="eyebrow">
-            {entity.runCard.tags.join(" · ") || "entity"} · {entity.lifecycle}
-          </p>
-          <h1 className="focus-title">{entity.runCard.title}</h1>
-        </div>
-      </button>
+      <div className="focus-header">
+        {tokenUrl ? (
+          <button
+            type="button"
+            className="card-token-btn"
+            aria-label={`Remove image from ${entity.runCard.title}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              setRemovingImage(true);
+            }}
+          >
+            <img className="card-token" src={tokenUrl} alt="" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="focus-toggle"
+          aria-expanded={expanded}
+          onPointerDown={drag.onPointerDown}
+          onClick={() => {
+            if (drag.consumeClick()) {
+              return;
+            }
+            store.setFocus(entity.id);
+            setExpanded((open) => !open);
+          }}
+        >
+          <div>
+            <p className="eyebrow">{cardTypeLabel(entity.runCard.tags)}</p>
+            <h1 className="focus-title">{entity.runCard.title}</h1>
+          </div>
+        </button>
+        <label className="card-session">
+          <span className="visually-hidden">Campaign</span>
+          <select
+            value={entity.sessionId ?? ""}
+            aria-label={`Campaign for ${entity.runCard.title}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => {
+              const value = event.target.value;
+              store.run(
+                store.setEntitySession(
+                  entity.id,
+                  value.length === 0 ? null : asSessionId(value),
+                ),
+              );
+            }}
+          >
+            <option value="">&lt;global&gt;</option>
+            {entity.sessionId !== null &&
+            !snap.sessions.some((session) => session.id === entity.sessionId) ? (
+              <option value={entity.sessionId}>Missing campaign</option>
+            ) : null}
+            {snap.sessions.map((session) => (
+              <option key={session.id} value={session.id}>
+                {session.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="card-category">
+          <span className="visually-hidden">Category</span>
+          <select
+            value={entity.runCard.category}
+            aria-label={`Category for ${entity.runCard.title}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => {
+              store.run(store.setEntityCategory(entity.id, event.target.value));
+            }}
+          >
+            {(snap.campaign?.cardCategories.length ?? 0) === 0 ? (
+              <option value="">No categories</option>
+            ) : null}
+            {entity.runCard.category.length > 0 &&
+            !(snap.campaign?.cardCategories.includes(entity.runCard.category) ?? false) ? (
+              <option value={entity.runCard.category}>{entity.runCard.category}</option>
+            ) : null}
+            {snap.campaign?.cardCategories.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       {expanded ? (
         <div className="entity-card-body">
           <form
@@ -86,43 +166,52 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
               aria-label="Card title"
             />
             <button type="submit">Rename</button>
-          </form>
-          {pictures.map((block) => {
-            const url = snap.mediaUrls[block.mediaId];
-            if (!url) {
-              return (
-                <p key={block.mediaId} className="muted">
-                  Picture is missing
-                </p>
-              );
-            }
-            return (
-              <button
-                key={block.mediaId}
-                type="button"
-                className="card-picture"
-                onClick={() => store.openMediaView(block.mediaId)}
-              >
-                <img src={url} alt={entity.runCard.title} />
+            {entity.lifecycle === "ephemeral" ? (
+              <button type="button" onClick={() => store.run(store.promoteEntity(entity.id))}>
+                This one matters
               </button>
-            );
-          })}
-          {text && !showsOriginal && !entity.runCard.tags.includes("image") ? (
-            <p className="lede">{text}</p>
+            ) : null}
+            <button type="button" onClick={() => store.run(store.generateTokenArt(entity.id))}>
+              Generate image
+            </button>
+            <button type="button" disabled={!canGrab} onClick={() => setGrabbing(true)}>
+              Grab image
+            </button>
+            <button
+              type="button"
+              disabled={!clipboardHasImage}
+              onClick={() =>
+                store.run(readClipboardImage().then((blob) => store.insertEntityImage(entity.id, blob)))
+              }
+            >
+              Insert image
+            </button>
+            {showImageId ? (
+              <button type="button" onClick={() => store.openMediaView(showImageId)}>
+                Show image
+              </button>
+            ) : null}
+            <button type="button" onClick={() => store.run(store.deleteEntity(entity.id))}>
+              Delete
+            </button>
+          </form>
+          {isTextCard ? (
+            <textarea
+              className="card-text-editor"
+              value={textDraft}
+              onChange={(event) => setTextDraft(event.target.value)}
+              onBlur={() => {
+                store.run(store.setEntityText(entity.id, textDraft));
+              }}
+              aria-label={`Text for ${entity.runCard.title}`}
+              rows={Math.max(4, textDraft.split("\n").length + 1)}
+            />
           ) : null}
           {facts.length > 0 ? (
             <dl className="facts">
               {facts.map((fact) => (
                 <div key={`${fact.label}:${fact.value}`}>
-                  <dt>
-                    <button
-                      type="button"
-                      className="linkish"
-                      onClick={() => store.run(store.pinFact(entity.id, fact.label))}
-                    >
-                      {fact.label}
-                    </button>
-                  </dt>
+                  <dt>{fact.label}</dt>
                   <dd>{fact.value}</dd>
                 </div>
               ))}
@@ -174,33 +263,6 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
               {original.page !== null ? ` p.${String(original.page)}` : ""} — {original.excerpt}
             </button>
           ) : null}
-          <footer className="card-actions">
-            {entity.lifecycle === "ephemeral" ? (
-              <button type="button" onClick={() => store.run(store.promoteEntity(entity.id))}>
-                This one matters
-              </button>
-            ) : null}
-            <button type="button" onClick={() => store.run(store.attachEntityToScene(entity.id))}>
-              Pin to scene
-            </button>
-            <button type="button" onClick={() => store.run(store.addParticipant(entity.id))}>
-              Into encounter
-            </button>
-            <button type="button" onClick={() => store.run(store.generateTokenArt(entity.id))}>
-              Token (AI)
-            </button>
-            <button type="button" onClick={() => setGrabbing(true)}>
-              Token (grab)
-            </button>
-            {tokenArt ? (
-              <button type="button" onClick={() => store.openMediaView(tokenArt.mediaId)}>
-                View image
-              </button>
-            ) : null}
-            <button type="button" onClick={() => store.run(store.deleteEntity(entity.id))}>
-              Delete
-            </button>
-          </footer>
           {original.kind === "url" ? <CardUrlFrame href={original.href} /> : null}
           {original.kind === "pdf" ? (
             <CardPdfReader sourceId={original.sourceId} bookmarkPage={original.page} />
@@ -208,6 +270,37 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
         </div>
       ) : null}
       {grabbing ? <TokenGrabModal entity={entity} onClose={() => setGrabbing(false)} /> : null}
+      {removingImage
+        ? createPortal(
+            <div
+              className="busy-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="remove-image-title"
+              onClick={() => setRemovingImage(false)}
+            >
+              <div className="busy-modal-card" onClick={(event) => event.stopPropagation()}>
+                <p className="eyebrow">Image</p>
+                <h2 id="remove-image-title">Remove image from this card?</h2>
+                <p>The picture will be deleted from "{entity.runCard.title}".</p>
+                <div className="card-actions">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      store.run(store.removeEntityImages(entity.id).then(() => setRemovingImage(false)));
+                    }}
+                  >
+                    Remove
+                  </button>
+                  <button type="button" onClick={() => setRemovingImage(false)}>
+                    Keep
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
       {drag.ghost
         ? createPortal(
             <div className="card-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y }}>
@@ -218,4 +311,16 @@ export function EntityCard({ entity, revealSecrets }: FocusCardProps) {
         : null}
     </article>
   );
+}
+
+function cardHasGrabSource(entity: Entity, sources: ReadonlyArray<Source>): boolean {
+  const original = cardOriginal(entity, sources);
+  if (original.kind === "url") {
+    return true;
+  }
+  if (original.kind !== "pdf") {
+    return false;
+  }
+  const pdf = sources.find((source) => source.id === original.sourceId);
+  return pdf?.bytes instanceof Blob;
 }

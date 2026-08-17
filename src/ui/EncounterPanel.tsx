@@ -32,7 +32,7 @@ export function EncounterAmbient() {
         {participants.length === 0 ? (
           <p className="muted encounter-hint">
             {mapId === null
-              ? "Drag cards here. Drop a map card to set the battleground."
+              ? "Drag cards here. Drop an image card to set the map."
               : "Drag cards here. The same card can go in more than once."}
           </p>
         ) : (

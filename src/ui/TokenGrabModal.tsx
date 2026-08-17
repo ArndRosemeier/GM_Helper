@@ -3,11 +3,20 @@ import { createPortal } from "react-dom";
 import { cardOriginal } from "../host/cardModel";
 import { useHost } from "../host/HostContext";
 import type { Entity } from "../host/types";
-import { factsFrom, mediaBlocksFrom, textFrom, tracksFrom } from "../host/runCard";
+import { factsFrom, textFrom, tracksFrom } from "../host/runCard";
+import {
+  captureViewportRegionPng,
+  imageElementToPngBlob,
+  tryLoadImageUrl,
+} from "../lib/captureTab";
 import { cropImageToPng, rasterizeCardPoster } from "../lib/cardPoster";
 
 type Point = { x: number; y: number };
-type Crop = { x: number; y: number; size: number };
+type Crop = { x: number; y: number; width: number; height: number };
+
+type GrabSurface =
+  | { kind: "image"; url: string }
+  | { kind: "iframe"; href: string };
 
 export function TokenGrabModal({
   entity,
@@ -18,32 +27,51 @@ export function TokenGrabModal({
 }) {
   const { store, snap } = useHost();
   const imageRef = useRef<HTMLImageElement>(null);
-  const [posterUrl, setPosterUrl] = useState<string | null>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [surface, setSurface] = useState<GrabSurface | null>(null);
   const [drag, setDrag] = useState<{ start: Point; current: Point } | null>(null);
   const [crop, setCrop] = useState<Crop | null>(null);
 
   useEffect(() => {
     let revoked: string | null = null;
     let cancelled = false;
-    const pictures = mediaBlocksFrom(entity.runCard).filter((block) => block.role !== "token");
     const original = cardOriginal(entity, snap.sources);
-    const pdf =
-      original.kind === "pdf" ? snap.sources.find((source) => source.id === original.sourceId) : undefined;
     store.run(
       (async () => {
+        if (original.kind === "url") {
+          const loaded = await tryLoadImageUrl(original.href);
+          if (cancelled) {
+            return;
+          }
+          if (loaded) {
+            try {
+              const blob = await imageElementToPngBlob(loaded);
+              if (cancelled) {
+                return;
+              }
+              revoked = URL.createObjectURL(blob);
+              setSurface({ kind: "image", url: revoked });
+              return;
+            } catch {
+              // Fall through to the live page frame.
+            }
+          }
+          setSurface({ kind: "iframe", href: original.href });
+          return;
+        }
+
+        const pdf =
+          original.kind === "pdf"
+            ? snap.sources.find((source) => source.id === original.sourceId)
+            : undefined;
         const blob = await rasterizeCardPoster({
           title: entity.runCard.title,
           tags: entity.runCard.tags,
           text: textFrom(entity.runCard),
           facts: factsFrom(entity.runCard),
           tracks: tracksFrom(entity.runCard),
-          imageUrls: pictures.map((block) => {
-            const url = snap.mediaUrls[block.mediaId];
-            if (!url) {
-              throw new Error(`Card picture ${block.mediaId} is not loaded`);
-            }
-            return url;
-          }),
+          imageUrls: [],
           pdfBytes: pdf?.bytes ?? null,
           pdfPage: original.kind === "pdf" ? original.page : null,
         });
@@ -51,7 +79,7 @@ export function TokenGrabModal({
           return;
         }
         revoked = URL.createObjectURL(blob);
-        setPosterUrl(revoked);
+        setSurface({ kind: "image", url: revoked });
       })(),
     );
     return () => {
@@ -60,34 +88,58 @@ export function TokenGrabModal({
         URL.revokeObjectURL(revoked);
       }
     };
-  }, [entity, snap.mediaUrls, snap.sources, store]);
+  }, [entity, snap.sources, store]);
 
-  const onPointerDown = (event: ReactPointerEvent<HTMLImageElement>): void => {
-    const image = imageRef.current;
-    if (!image) {
-      store.setError("Token grab image is not on screen");
-      return;
+  const readPoint = (event: ReactPointerEvent<HTMLElement>): Point => {
+    if (surface?.kind === "image") {
+      const image = imageRef.current;
+      if (!image) {
+        throw new Error("Token grab image is not on screen");
+      }
+      return imagePoint(event, image);
     }
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const point = imagePoint(event, image);
-    setDrag({ start: point, current: point });
-    setCrop(squareCrop(point, point, image.naturalWidth, image.naturalHeight));
+    const frame = frameRef.current;
+    if (!frame) {
+      throw new Error("Token grab page is not on screen");
+    }
+    return elementPoint(event, frame);
   };
 
-  const onPointerMove = (event: ReactPointerEvent<HTMLImageElement>): void => {
+  const surfaceSize = (): { width: number; height: number } => {
+    if (surface?.kind === "image") {
+      const image = imageRef.current;
+      if (!image) {
+        throw new Error("Token grab image is not on screen");
+      }
+      return { width: image.naturalWidth, height: image.naturalHeight };
+    }
+    const frame = frameRef.current;
+    if (!frame) {
+      throw new Error("Token grab page is not on screen");
+    }
+    const rect = frame.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLElement>): void => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const point = readPoint(event);
+    const size = surfaceSize();
+    setDrag({ start: point, current: point });
+    setCrop(rectCrop(point, point, size.width, size.height));
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLElement>): void => {
     if (!event.currentTarget.hasPointerCapture(event.pointerId) || !drag) {
       return;
     }
-    const image = imageRef.current;
-    if (!image) {
-      return;
-    }
-    const current = imagePoint(event, image);
+    const current = readPoint(event);
+    const size = surfaceSize();
     setDrag({ ...drag, current });
-    setCrop(squareCrop(drag.start, current, image.naturalWidth, image.naturalHeight));
+    setCrop(rectCrop(drag.start, current, size.width, size.height));
   };
 
-  const onPointerUp = (event: ReactPointerEvent<HTMLImageElement>): void => {
+  const onPointerUp = (event: ReactPointerEvent<HTMLElement>): void => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -95,23 +147,54 @@ export function TokenGrabModal({
   };
 
   const confirm = (): void => {
-    const image = imageRef.current;
-    if (!image || !crop) {
-      store.setError("Select the area that should become the token");
+    if (!crop || !surface) {
+      store.setError("Select the area that should become the image");
       return;
     }
+    if (surface.kind === "image") {
+      const image = imageRef.current;
+      if (!image) {
+        store.setError("Token grab image is not on screen");
+        return;
+      }
+      store.run(
+        cropImageToPng(image, crop).then((blob) => store.saveTokenArt(entity.id, blob).then(onClose)),
+      );
+      return;
+    }
+    const frame = frameRef.current;
+    if (!frame) {
+      store.setError("Token grab page is not on screen");
+      return;
+    }
+    const rect = frame.getBoundingClientRect();
+    const region = {
+      left: rect.left + crop.x,
+      top: rect.top + crop.y,
+      width: crop.width,
+      height: crop.height,
+    };
     store.run(
-      cropImageToPng(image, crop).then((blob) => store.saveTokenArt(entity.id, blob).then(onClose)),
+      captureViewportRegionPng(region).then((blob) =>
+        store.saveTokenArt(entity.id, blob).then(onClose),
+      ),
     );
   };
 
-  const selection = crop && posterUrl && imageRef.current ? displayCrop(crop, imageRef.current) : null;
+  const selection =
+    crop && surface
+      ? surface.kind === "image" && imageRef.current
+        ? displayCropOnImage(crop, imageRef.current)
+        : surface.kind === "iframe" && frameRef.current
+          ? displayCropOnElement(crop, frameRef.current)
+          : null
+      : null;
 
   return createPortal(
     <div className="token-grab" role="dialog" aria-modal="true" aria-labelledby="token-grab-title">
       <header className="token-grab-bar">
         <div>
-          <p className="eyebrow">Token grab</p>
+          <p className="eyebrow">Grab image</p>
           <h2 id="token-grab-title">{entity.runCard.title}</h2>
         </div>
         <div className="card-actions">
@@ -124,26 +207,48 @@ export function TokenGrabModal({
         </div>
       </header>
       <div className="token-grab-stage">
-        {posterUrl ? (
-          <div className="token-grab-frame">
-            <img
-              ref={imageRef}
-              src={posterUrl}
-              alt={entity.runCard.title}
-              draggable={false}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-            />
+        {surface ? (
+          <div className="token-grab-frame" ref={stageRef}>
+            {surface.kind === "image" ? (
+              <img
+                ref={imageRef}
+                src={surface.url}
+                alt={entity.runCard.title}
+                draggable={false}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
+              />
+            ) : (
+              <iframe
+                ref={frameRef}
+                className="token-grab-frame-page"
+                title={entity.runCard.title}
+                src={surface.href}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
+              />
+            )}
+            {surface.kind === "iframe" ? (
+              <div
+                className="token-grab-hit"
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
+              />
+            ) : null}
             {selection ? (
               <div
                 className="token-grab-select"
                 style={{
                   left: selection.left,
                   top: selection.top,
-                  width: selection.size,
-                  height: selection.size,
+                  width: selection.width,
+                  height: selection.height,
                 }}
               />
             ) : null}
@@ -152,13 +257,17 @@ export function TokenGrabModal({
           <p className="muted">Drawing the card…</p>
         )}
       </div>
-      <p className="muted token-grab-hint">Drag a square on the card. That crop is stored as the token.</p>
+      <p className="muted token-grab-hint">
+        {surface?.kind === "iframe"
+          ? "Drag a rectangle on the page. Chrome may ask to share this tab when you use the selection."
+          : "Drag a rectangle on the card. That crop is stored as the image."}
+      </p>
     </div>,
     document.body,
   );
 }
 
-function imagePoint(event: ReactPointerEvent<HTMLImageElement>, image: HTMLImageElement): Point {
+function imagePoint(event: ReactPointerEvent<HTMLElement>, image: HTMLImageElement): Point {
   const rect = image.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) {
     throw new Error("Token grab image has no layout size");
@@ -169,20 +278,34 @@ function imagePoint(event: ReactPointerEvent<HTMLImageElement>, image: HTMLImage
   };
 }
 
-function squareCrop(start: Point, current: Point, width: number, height: number): Crop {
-  const raw = Math.max(Math.abs(current.x - start.x), Math.abs(current.y - start.y), 16);
-  const size = Math.min(raw, width, height);
-  let x = current.x < start.x ? start.x - size : start.x;
-  let y = current.y < start.y ? start.y - size : start.y;
-  x = clamp(x, 0, width - size);
-  y = clamp(y, 0, height - size);
-  return { x, y, size };
+function elementPoint(event: ReactPointerEvent<HTMLElement>, element: HTMLElement): Point {
+  const rect = element.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) {
+    throw new Error("Token grab page has no layout size");
+  }
+  return {
+    x: clamp(event.clientX - rect.left, 0, rect.width),
+    y: clamp(event.clientY - rect.top, 0, rect.height),
+  };
 }
 
-function displayCrop(
+function rectCrop(start: Point, current: Point, width: number, height: number): Crop {
+  const left = clamp(Math.min(start.x, current.x), 0, width);
+  const top = clamp(Math.min(start.y, current.y), 0, height);
+  const right = clamp(Math.max(start.x, current.x), 0, width);
+  const bottom = clamp(Math.max(start.y, current.y), 0, height);
+  return {
+    x: left,
+    y: top,
+    width: Math.max(16, right - left),
+    height: Math.max(16, bottom - top),
+  };
+}
+
+function displayCropOnImage(
   crop: Crop,
   image: HTMLImageElement,
-): { left: number; top: number; size: number } {
+): { left: number; top: number; width: number; height: number } {
   const rect = image.getBoundingClientRect();
   const parent = image.parentElement?.getBoundingClientRect();
   if (!parent || image.naturalWidth === 0 || image.naturalHeight === 0) {
@@ -193,7 +316,25 @@ function displayCrop(
   return {
     left: rect.left - parent.left + crop.x * scaleX,
     top: rect.top - parent.top + crop.y * scaleY,
-    size: crop.size * scaleX,
+    width: crop.width * scaleX,
+    height: crop.height * scaleY,
+  };
+}
+
+function displayCropOnElement(
+  crop: Crop,
+  element: HTMLElement,
+): { left: number; top: number; width: number; height: number } {
+  const rect = element.getBoundingClientRect();
+  const parent = element.parentElement?.getBoundingClientRect();
+  if (!parent) {
+    throw new Error("Token grab page is not laid out");
+  }
+  return {
+    left: rect.left - parent.left + crop.x,
+    top: rect.top - parent.top + crop.y,
+    width: crop.width,
+    height: crop.height,
   };
 }
 

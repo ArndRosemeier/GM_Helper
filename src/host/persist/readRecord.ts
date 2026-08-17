@@ -2,7 +2,6 @@ import {
   asCampaignId,
   asChunkId,
   asEntityId,
-  asFactPinId,
   asLogEntryId,
   asMediaId,
   asParticipantId,
@@ -26,7 +25,6 @@ import {
   type EncounterState,
   type Entity,
   type EntityLifecycle,
-  type FactPin,
   type IsoDateTime,
   type LogEntry,
   type MediaRecord,
@@ -39,6 +37,7 @@ import {
   type SourceChunk,
   type SourceKind,
   type Track,
+  withDefaultCardCategories,
 } from "../types";
 import type { MigrationWarning } from "./warnings";
 
@@ -74,8 +73,10 @@ export function readCampaign(value: unknown, warnings: MigrationWarning[]): Camp
   return {
     id: asCampaignId(id),
     name: readString(record, "name", "campaigns", id, warnings) ?? "Campaign",
-    pinnedFacts: readPinnedFacts(record.pinnedFacts, id, warnings),
     createdAt: readIso(record, "createdAt", "campaigns", id, warnings),
+    cardCategories: withDefaultCardCategories(
+      readStringList(record.cardCategories, "campaigns", id, "cardCategories", warnings),
+    ),
   };
 }
 
@@ -93,9 +94,20 @@ export function readEntity(value: unknown, warnings: MigrationWarning[]): Entity
   if (lifecycle !== undefined && !isLifecycle(lifecycle)) {
     warnings.push({ store: "entities", id, message: `Unknown lifecycle ${String(lifecycle)}, using recurring` });
   }
+  const rawSessionId = record.sessionId;
+  let sessionId: ReturnType<typeof asSessionId> | null = null;
+  if (rawSessionId === undefined || rawSessionId === null) {
+    sessionId = null;
+  } else if (typeof rawSessionId === "string" && rawSessionId.length > 0) {
+    sessionId = asSessionId(rawSessionId);
+  } else {
+    warnings.push({ store: "entities", id, message: "sessionId was invalid and was cleared to global" });
+    sessionId = null;
+  }
   return {
     id: asEntityId(id),
     campaignId: asCampaignId(campaignId),
+    sessionId,
     runCard: readRunCard(record.runCard, id, warnings),
     lifecycle: isLifecycle(lifecycle) ? lifecycle : "recurring",
     createdAt: readIso(record, "createdAt", "entities", id, warnings),
@@ -300,7 +312,7 @@ function readRunCard(value: unknown, entityId: string, warnings: MigrationWarnin
   const record = asObject(value, "entities", entityId, warnings);
   if (!record) {
     warnings.push({ store: "entities", id: entityId, message: "runCard was missing; used an empty card" });
-    return { title: "Untitled", tags: [], blocks: [] };
+    return { title: "Untitled", tags: [], category: "", blocks: [] };
   }
   const tags = record.tags;
   const tagList: string[] = [];
@@ -315,9 +327,17 @@ function readRunCard(value: unknown, entityId: string, warnings: MigrationWarnin
   } else if (tags !== undefined) {
     warnings.push({ store: "entities", id: entityId, message: "runCard.tags was not a list" });
   }
+  const categoryRaw = record.category;
+  let category = "";
+  if (typeof categoryRaw === "string") {
+    category = categoryRaw.trim();
+  } else if (categoryRaw !== undefined) {
+    warnings.push({ store: "entities", id: entityId, message: "runCard.category was not a string and was cleared" });
+  }
   return {
     title: readString(record, "title", "entities", entityId, warnings) ?? "Untitled",
     tags: tagList,
+    category,
     blocks: readBlocks(record.blocks, entityId, warnings),
   };
 }
@@ -442,36 +462,6 @@ function readTracks(value: unknown, entityId: string, warnings: MigrationWarning
   return items;
 }
 
-function readPinnedFacts(value: unknown, campaignId: string, warnings: MigrationWarning[]): FactPin[] {
-  if (value === undefined) {
-    return [];
-  }
-  if (!Array.isArray(value)) {
-    warnings.push({ store: "campaigns", id: campaignId, message: "pinnedFacts was not a list" });
-    return [];
-  }
-  const pins: FactPin[] = [];
-  for (const item of value) {
-    if (typeof item !== "object" || item === null) {
-      warnings.push({ store: "campaigns", id: campaignId, message: "A pinned fact was not an object and was dropped" });
-      continue;
-    }
-    const record = item as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id : null;
-    const entityId = typeof record.entityId === "string" ? record.entityId : null;
-    if (id === null || entityId === null) {
-      warnings.push({ store: "campaigns", id: campaignId, message: "A pinned fact was missing ids and was dropped" });
-      continue;
-    }
-    pins.push({
-      id: asFactPinId(id),
-      entityId: asEntityId(entityId),
-      label: typeof record.label === "string" ? record.label : "",
-    });
-  }
-  return pins;
-}
-
 function readBattleground(value: unknown, sceneId: string, warnings: MigrationWarning[]): Battleground {
   if (value === undefined) {
     return emptyBattleground();
@@ -480,9 +470,7 @@ function readBattleground(value: unknown, sceneId: string, warnings: MigrationWa
   if (!record) {
     return emptyBattleground();
   }
-  const mapMediaId = record.mapMediaId;
   return {
-    mapMediaId: typeof mapMediaId === "string" ? asMediaId(mapMediaId) : null,
     tokens: readTokens(record.tokens, sceneId, warnings, "scenes"),
     gridSize: readGridSize(record.gridSize, sceneId, warnings),
     tokenSize: readTokenSize(record.tokenSize, record.gridSize, sceneId, warnings),
@@ -630,6 +618,31 @@ function readId(
     return null;
   }
   return value;
+}
+
+function readStringList(
+  value: unknown,
+  store: string,
+  id: string,
+  field: string,
+  warnings: MigrationWarning[],
+): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    warnings.push({ store, id, message: `${field} was not a list and was cleared` });
+    return [];
+  }
+  const items: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string" && item.trim().length > 0) {
+      items.push(item.trim());
+    } else {
+      warnings.push({ store, id, message: `A ${field} entry was dropped` });
+    }
+  }
+  return items;
 }
 
 function readString(

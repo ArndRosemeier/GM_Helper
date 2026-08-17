@@ -4,8 +4,6 @@ import {
   asSessionId,
   newCampaignId,
   newEntityId,
-  newFactPinId,
-  newLogEntryId,
   newMediaId,
   newParticipantId,
   newSceneId,
@@ -29,6 +27,7 @@ import {
   emptyBattleground,
   GRID_SIZE_MAX,
   GRID_SIZE_MIN,
+  DEFAULT_CARD_CATEGORIES,
   type BattlegroundToken,
   type BusyStatus,
   type Campaign,
@@ -49,9 +48,10 @@ import {
   type SourceView,
   type Surface,
   type UrlView,
-  type WebSearchView,
 } from "../types";
 import { migrateImportedCampaign, migrateOpenDatabase, migrationBanner, SCHEMA_VERSION } from "../persist";
+import { migrateArchivePayload, parseArchiveManifest } from "../persist/archiveMigrate";
+import { SCHEMA_META_KEY } from "../persist/schema";
 import {
   formatMigrationWarnings,
   type MigrationWarning,
@@ -76,17 +76,27 @@ import {
   type SettingsPatch,
   type SurfaceLock,
 } from "../settings";
+import {
+  blobToUint8Array,
+  packArchiveZip,
+  unpackArchiveZip,
+  ARCHIVE_FORMAT,
+  type ArchiveData,
+} from "../../lib/archive";
 import { createCatalog, rebuildCatalog, searchCatalog } from "../search/catalog";
 import {
   adjustTrackInCard,
   cloneTracks,
+  mediaBlocksFrom,
   mediaFrom,
   newTrack,
   replaceTracks,
+  textFrom,
   tracksFrom,
-  pdfBookmarkForPage,
   withFacts,
   withMedia,
+  withoutMedia,
+  withCategory,
   withProvenance,
   withSecret,
   withText,
@@ -94,7 +104,6 @@ import {
 import { ingestFile } from "../../lib/ingest";
 import { parseEntityUrl, titleFromEntityUrl } from "../../lib/entityUrl";
 import { openExternalTab } from "../../lib/iframeEmbed";
-import { googleSearchUrl, webSearchQuery } from "../../lib/webSearch";
 import { localNpcCard } from "../../lib/names";
 import {
   completeJson,
@@ -123,7 +132,6 @@ export type HostSnapshot = {
   focus: Entity | null;
   sources: ReadonlyArray<Source>;
   chunks: ReadonlyArray<SourceChunk>;
-  logEntries: ReadonlyArray<LogEntry>;
   encounter: EncounterState | null;
   settings: AppSettings;
   mode: AppMode;
@@ -132,10 +140,13 @@ export type HostSnapshot = {
   mediaUrls: Readonly<Record<string, string>>;
   sourceView: SourceView | null;
   mediaViewId: MediaId | null;
-  webSearchView: WebSearchView | null;
   urlView: UrlView | null;
   busy: BusyStatus | null;
   lastBackupAt: IsoDateTime | null;
+  /** Category names selected in the card filter bar. */
+  categoryFilters: ReadonlyArray<string>;
+  /** Category applied to newly created cards. */
+  addCategory: string;
 };
 
 const META_CAMPAIGN = "currentCampaignId";
@@ -169,20 +180,22 @@ export class HostStore {
   private focusEntityId: EntityId | null = null;
   private tableCardIds: EntityId[] = [];
   private openedEntityId: EntityId | null = null;
-  private mode: AppMode = "run";
+  private mode: AppMode = "home";
   private surface: Surface = "gm";
   private ready = false;
   private error: string | null = null;
   private sourceView: SourceView | null = null;
   private mediaViewId: MediaId | null = null;
-  private webSearchView: WebSearchView | null = null;
   private urlView: UrlView | null = null;
   private busy: BusyStatus | null = null;
+  private readonly sourcePageById = new Map<SourceId, number>();
   private snapshot: HostSnapshot = this.createSnapshot();
   private booting: Promise<void> | null = null;
   private dataDirty = false;
   private backupTimer: number | null = null;
   private lastBackupAt: IsoDateTime | null = null;
+  private categoryFilters: string[] = [];
+  private addCategory = "";
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -236,14 +249,6 @@ export class HostStore {
       this.setErrorAndThrow("Boot produced no campaign");
     }
     await this.loadCampaign(startId);
-    const metaSession = await this.db.get("meta", META_SESSION);
-    if (metaSession) {
-      const sessionId = asSessionId(metaSession);
-      if (this.sessions.some((session) => session.id === sessionId)) {
-        this.currentSessionId = sessionId;
-      }
-    }
-    this.ensureSessionSelection();
     this.ready = true;
     await this.persistCampaignBackup();
     this.emit();
@@ -343,8 +348,8 @@ export class HostStore {
     const campaign: Campaign = {
       id: newCampaignId(),
       name,
-      pinnedFacts: [],
       createdAt: nowIso(),
+      cardCategories: [...DEFAULT_CARD_CATEGORIES],
     };
     await this.requireDb().put("campaigns", campaign);
     this.markDirty();
@@ -359,6 +364,15 @@ export class HostStore {
     this.encounter = (await this.requireDb().get("encounters", id)) ?? null;
     this.logEntries = await this.requireDb().getAllFromIndex("logEntries", "sessionId", id);
     this.ensureSceneSelection();
+    this.emit();
+  }
+
+  async clearSession(): Promise<void> {
+    this.currentSessionId = null;
+    this.currentSceneId = null;
+    this.encounter = null;
+    this.logEntries = [];
+    await this.requireDb().put("meta", "", META_SESSION);
     this.emit();
   }
 
@@ -402,6 +416,10 @@ export class HostStore {
     this.markDirty();
     this.sessions = this.sessions.filter((session) => session.id !== id);
     this.scenes = this.scenes.filter((scene) => scene.sessionId !== id);
+    const orphaned = this.entities.filter((entity) => entity.sessionId === id);
+    for (const entity of orphaned) {
+      await this.putEntity({ ...entity, sessionId: null, updatedAt: nowIso() });
+    }
     if (this.currentSessionId !== id) {
       this.emit();
       return;
@@ -411,11 +429,7 @@ export class HostStore {
       await this.selectSession(next.id);
       return;
     }
-    this.currentSessionId = null;
-    this.currentSceneId = null;
-    this.encounter = null;
-    this.logEntries = [];
-    this.emit();
+    await this.clearSession();
   }
 
   async deleteScene(id: SceneId): Promise<void> {
@@ -461,7 +475,6 @@ export class HostStore {
     this.focusEntityId = id;
     this.sourceView = null;
     this.mediaViewId = null;
-    this.webSearchView = null;
     this.urlView = null;
     if (id !== null && this.placeOnTable(id)) {
       this.run(this.persistTableCards());
@@ -470,12 +483,11 @@ export class HostStore {
   }
 
   openCard(id: EntityId): void {
-    this.mode = "run";
+    this.mode = "home";
     this.focusEntityId = id;
     this.openedEntityId = id;
     this.sourceView = null;
     this.mediaViewId = null;
-    this.webSearchView = null;
     this.urlView = null;
     if (this.placeOnTable(id)) {
       this.run(this.persistTableCards());
@@ -493,7 +505,7 @@ export class HostStore {
     const source = await this.ensureWebSource();
     const entity = await this.createEntity(
       withProvenance(
-        withText({ title: titleFromEntityUrl(url), tags: ["web"], blocks: [] }, href),
+        withText({ title: titleFromEntityUrl(url), tags: ["web"], category: "", blocks: [] }, href),
         {
           kind: "provenance",
           sourceId: source.id,
@@ -529,6 +541,39 @@ export class HostStore {
     await this.updateRunCard(id, { ...entity.runCard, title });
   }
 
+  async setEntityCategory(id: EntityId, category: string): Promise<void> {
+    const entity = this.requireEntity(id);
+    const campaign = this.requireCampaign();
+    const next = category.trim();
+    if (next.length > 0 && !campaign.cardCategories.includes(next)) {
+      this.setErrorAndThrow(`Unknown category “${next}”`);
+    }
+    if (entity.runCard.category === next) {
+      return;
+    }
+    await this.updateRunCard(id, withCategory(entity.runCard, next));
+  }
+
+  async setEntitySession(id: EntityId, sessionId: SessionId | null): Promise<void> {
+    const entity = this.requireEntity(id);
+    if (sessionId !== null && !this.sessions.some((session) => session.id === sessionId)) {
+      this.setErrorAndThrow("Unknown campaign");
+    }
+    if (entity.sessionId === sessionId) {
+      return;
+    }
+    await this.putEntity({ ...entity, sessionId, updatedAt: nowIso() });
+    this.emit();
+  }
+
+  async setEntityText(id: EntityId, raw: string): Promise<void> {
+    const entity = this.requireEntity(id);
+    if (textFrom(entity.runCard) === raw) {
+      return;
+    }
+    await this.updateRunCard(id, withText(entity.runCard, raw));
+  }
+
   async promoteEntity(id: EntityId): Promise<void> {
     const entity = this.requireEntity(id);
     await this.putEntity({ ...entity, lifecycle: "recurring", updatedAt: nowIso() });
@@ -539,15 +584,6 @@ export class HostStore {
     await this.requireDb().delete("entities", id);
     this.markDirty();
     this.entities = this.entities.filter((entity) => entity.id !== id);
-    const campaign = this.requireCampaign();
-    const nextCampaign: Campaign = {
-      ...campaign,
-      pinnedFacts: campaign.pinnedFacts.filter((pin) => pin.entityId !== id),
-    };
-    if (nextCampaign.pinnedFacts.length !== campaign.pinnedFacts.length) {
-      await this.requireDb().put("campaigns", nextCampaign);
-      this.campaigns = this.campaigns.map((item) => (item.id === nextCampaign.id ? nextCampaign : item));
-    }
     for (const scene of this.scenes) {
       const entityIds = scene.entityIds.filter((entityId) => entityId !== id);
       const tokens = scene.battleground.tokens.filter((token) => token.entityId !== id);
@@ -603,47 +639,6 @@ export class HostStore {
     await this.updateRunCard(entityId, adjustTrackInCard(entity.runCard, trackId, delta));
   }
 
-  async pinFact(entityId: EntityId, label: string): Promise<void> {
-    const campaign = this.requireCampaign();
-    if (campaign.pinnedFacts.some((pin) => pin.entityId === entityId && pin.label === label)) {
-      return;
-    }
-    const next: Campaign = {
-      ...campaign,
-      pinnedFacts: [...campaign.pinnedFacts, { id: newFactPinId(), entityId, label }],
-    };
-    await this.requireDb().put("campaigns", next);
-    this.markDirty();
-    this.campaigns = this.campaigns.map((item) => (item.id === next.id ? next : item));
-    this.emit();
-  }
-
-  async unpinFact(pinId: string): Promise<void> {
-    const campaign = this.requireCampaign();
-    const next: Campaign = {
-      ...campaign,
-      pinnedFacts: campaign.pinnedFacts.filter((pin) => pin.id !== pinId),
-    };
-    await this.requireDb().put("campaigns", next);
-    this.markDirty();
-    this.campaigns = this.campaigns.map((item) => (item.id === next.id ? next : item));
-    this.emit();
-  }
-
-  async addLog(body: string): Promise<void> {
-    const entry: LogEntry = {
-      id: newLogEntryId(),
-      sessionId: this.requireSessionId(),
-      sceneId: this.currentSceneId,
-      body,
-      createdAt: nowIso(),
-    };
-    await this.requireDb().put("logEntries", entry);
-    this.markDirty();
-    this.logEntries = [...this.logEntries, entry];
-    this.emit();
-  }
-
   async ingestUserFile(file: File): Promise<Source> {
     const result = await ingestFile(this.requireCampaignId(), file);
     await this.requireDb().put("sources", result.source);
@@ -656,13 +651,17 @@ export class HostStore {
         id: newMediaId(),
         campaignId: this.requireCampaignId(),
         mimeType: file.type || "image/png",
-        role: "map",
+        role: "other",
         bytes: file,
       };
       await this.putMedia(media);
-      if (this.currentSceneId) {
-        await this.setBattlegroundMap(media.id);
-      }
+      await this.createEntity(
+        withMedia(
+          withText({ title: result.source.title, tags: ["image"], category: "", blocks: [] }, result.source.title),
+          { kind: "media", mediaId: media.id, role: "other" },
+        ),
+        "recurring",
+      );
     }
     this.sources = [...this.sources, result.source];
     this.chunks = [...this.chunks, ...result.chunks];
@@ -681,6 +680,7 @@ export class HostStore {
     this.markDirty();
     this.sources = this.sources.filter((source) => source.id !== id);
     this.chunks = this.chunks.filter((chunk) => chunk.sourceId !== id);
+    this.sourcePageById.delete(id);
     if (this.sourceView?.sourceId === id) {
       this.sourceView = null;
     }
@@ -690,10 +690,18 @@ export class HostStore {
 
   openSourceView(sourceId: SourceId, page: number | null): void {
     this.sourceView = { sourceId, page };
+    this.rememberSourcePage(sourceId, page);
     this.mediaViewId = null;
-    this.webSearchView = null;
     this.urlView = null;
     this.emit();
+  }
+
+  openDoc(sourceId: SourceId): void {
+    const source = this.sources.find((item) => item.id === sourceId);
+    if (!source) {
+      this.setErrorAndThrow(`Source ${sourceId} is missing`);
+    }
+    this.openSourceView(sourceId, this.sourcePageById.get(sourceId) ?? 1);
   }
 
   openMediaView(mediaId: MediaId): void {
@@ -702,7 +710,6 @@ export class HostStore {
     }
     this.mediaViewId = mediaId;
     this.sourceView = null;
-    this.webSearchView = null;
     this.urlView = null;
     this.emit();
   }
@@ -732,22 +739,6 @@ export class HostStore {
     }
   }
 
-  openWebSearch(find: string): void {
-    let query: string;
-    try {
-      query = webSearchQuery(this.settings.webSearchPrefix, find);
-    } catch (error: unknown) {
-      this.setErrorAndThrow(error instanceof Error ? error.message : "Find is empty");
-    }
-    this.webSearchView = { query };
-    this.openUrlView(googleSearchUrl(query));
-  }
-
-  closeWebSearch(): void {
-    this.webSearchView = null;
-    this.emit();
-  }
-
   closeMediaView(): void {
     this.mediaViewId = null;
     this.emit();
@@ -767,8 +758,19 @@ export class HostStore {
     if (!this.sourceView) {
       this.setErrorAndThrow("No source is open");
     }
+    if (page < 1) {
+      this.setErrorAndThrow(`Page ${String(page)} is out of range`);
+    }
     this.sourceView = { ...this.sourceView, page };
+    this.rememberSourcePage(this.sourceView.sourceId, page);
     this.emit();
+  }
+
+  private rememberSourcePage(sourceId: SourceId, page: number | null): void {
+    if (page === null || page < 1) {
+      return;
+    }
+    this.sourcePageById.set(sourceId, page);
   }
 
   async saveCapturedImage(blob: Blob, title: string, role: MediaRecord["role"]): Promise<Entity> {
@@ -782,70 +784,66 @@ export class HostStore {
     await this.putMedia(media);
     const entity = await this.createEntity(
       withMedia(
-        withText({ title, tags: ["image"], blocks: [] }, title),
+        withText({ title, tags: ["image"], category: "", blocks: [] }, title),
         { kind: "media", mediaId: media.id, role },
       ),
       "recurring",
     );
-    if (role === "map" && this.currentSceneId) {
-      await this.setBattlegroundMap(media.id);
-    }
     this.sourceView = null;
     this.mediaViewId = null;
     this.emit();
     return entity;
   }
 
-  async saveChunkAsCard(chunkId: ChunkId): Promise<Entity> {
-    const chunk = this.requireChunk(chunkId);
-    const source = this.sources.find((item) => item.id === chunk.sourceId);
-    const tags = source?.kind === "pdf" ? ["pdf"] : [];
-    return this.createEntity(
-      withProvenance(
-        withText(
-          { title: chunk.heading, tags, blocks: [] },
-          chunk.text.slice(0, 600),
-        ),
-        {
-          kind: "provenance",
-          sourceId: chunk.sourceId,
-          page: chunk.page,
-          url: null,
-          excerpt: chunk.text.slice(0, 240),
-        },
-      ),
-      "recurring",
+  async saveSourcePageAsCard(
+    sourceId: SourceId,
+    page: number | null,
+    picture: Blob | null,
+  ): Promise<Entity> {
+    const source = this.sources.find((item) => item.id === sourceId);
+    if (!source) {
+      this.setErrorAndThrow(`Source ${sourceId} is missing`);
+    }
+    const chunk =
+      page === null
+        ? this.chunks.find((item) => item.sourceId === sourceId)
+        : (this.chunks.find((item) => item.sourceId === sourceId && item.page === page) ??
+          this.chunks.find((item) => item.sourceId === sourceId));
+    const title = chunk?.heading ?? (page === null ? source.title : `${source.title} p.${String(page)}`);
+    const text = chunk?.text.slice(0, 600) ?? title;
+    const tags = source.kind === "pdf" || source.kind === "image" ? [source.kind] : [];
+    let card = withProvenance(
+      withText({ title, tags, category: "", blocks: [] }, text),
+      {
+        kind: "provenance",
+        sourceId,
+        page,
+        url: null,
+        excerpt: text.slice(0, 240),
+      },
     );
+    if (picture !== null) {
+      const media: MediaRecord = {
+        id: newMediaId(),
+        campaignId: source.campaignId,
+        mimeType: picture.type || "image/png",
+        role: "other",
+        bytes: picture,
+      };
+      await this.putMedia(media);
+      card = withMedia(card, { kind: "media", mediaId: media.id, role: "other" });
+    }
+    this.sourceView = null;
+    this.mediaViewId = null;
+    this.urlView = null;
+    const entity = await this.createEntity(card, "recurring");
+    this.openCard(entity.id);
+    return entity;
   }
 
-  async bookmarkPdfPage(sourceId: SourceId, page: number): Promise<Entity> {
-    this.sourceView = null;
-    const existing = pdfBookmarkForPage(this.entities, sourceId, page);
-    if (existing) {
-      this.openCard(existing.id);
-      return existing;
-    }
-    const source = this.sources.find((item) => item.id === sourceId);
-    if (!source || source.kind !== "pdf") {
-      this.setErrorAndThrow("That source is not a PDF");
-    }
-    const chunk = this.chunks.find((item) => item.sourceId === sourceId && item.page === page);
-    const heading = chunk?.heading ?? source.title;
-    const title = `${heading} p.${String(page)}`;
-    const text = chunk?.text ?? title;
-    return this.createEntity(
-      withProvenance(
-        withText({ title, tags: ["pdf"], blocks: [] }, text.slice(0, 600)),
-        {
-          kind: "provenance",
-          sourceId,
-          page,
-          url: null,
-          excerpt: text.slice(0, 240),
-        },
-      ),
-      "recurring",
-    );
+  async saveChunkAsCard(chunkId: ChunkId): Promise<Entity> {
+    const chunk = this.requireChunk(chunkId);
+    return this.saveSourcePageAsCard(chunk.sourceId, chunk.page, null);
   }
 
   async liftChunk(chunkId: ChunkId): Promise<Entity> {
@@ -866,7 +864,7 @@ export class HostStore {
     const lifted = parseLiftedCard(raw);
     const source = this.sources.find((item) => item.id === chunk.sourceId);
     const tags = source?.kind === "pdf" && !lifted.tags.includes("pdf") ? [...lifted.tags, "pdf"] : lifted.tags;
-    let card: RunCard = { title: lifted.title, tags, blocks: [] };
+    let card: RunCard = { title: lifted.title, tags, category: "", blocks: [] };
     if (lifted.text.length > 0) {
       card = withText(card, lifted.text);
     }
@@ -932,7 +930,7 @@ export class HostStore {
       const npc = parseGeneratedNpc(raw);
       card = withSecret(
         withFacts(
-          withText({ title: npc.title, tags: ["npc"], blocks: [] }, npc.look),
+          withText({ title: npc.title, tags: ["npc"], category: "", blocks: [] }, npc.look),
           [
             { label: "Want", value: npc.want },
             { label: "First line", value: npc.firstLine },
@@ -941,7 +939,8 @@ export class HostStore {
         npc.secret,
       );
     }
-    const entity = await this.createEntity(card, "ephemeral");
+    const npcCategory = this.requireCampaign().cardCategories.includes("NPC") ? "NPC" : "";
+    const entity = await this.createEntity({ ...card, category: npcCategory }, "ephemeral");
     if (withPortrait) {
       this.setBusy({
         title: "Drawing a portrait",
@@ -979,42 +978,40 @@ export class HostStore {
   async sketchBattleground(): Promise<void> {
     this.setBusy({
       title: "Sketching the map",
-      detail: "The image model is drawing the battleground. This can take a minute.",
+      detail: "The image model is drawing a map card. This can take a minute.",
     });
     try {
-    const scene = this.requireScene(this.requireSceneId());
-    const blob = await generateImagePng(
-      this.requireOpenRouter(),
-      `Top-down battle map sketch, no text labels, for a scene called ${scene.title}. ${scene.description.trim()} Clear floor space for tokens.`,
-      "16:9",
-    );
-    const media: MediaRecord = {
-      id: newMediaId(),
-      campaignId: scene.campaignId,
-      mimeType: blob.type || "image/png",
-      role: "map",
-      bytes: blob,
-    };
-    await this.putMedia(media);
-    await this.setBattlegroundMap(media.id);
+      const scene = this.requireScene(this.requireSceneId());
+      const blob = await generateImagePng(
+        this.requireOpenRouter(),
+        `Top-down battle map sketch, no text labels, for a scene called ${scene.title}. ${scene.description.trim()} Clear floor space for tokens.`,
+        "16:9",
+      );
+      const media: MediaRecord = {
+        id: newMediaId(),
+        campaignId: scene.campaignId,
+        mimeType: blob.type || "image/png",
+        role: "other",
+        bytes: blob,
+      };
+      await this.putMedia(media);
+      const entity = await this.createEntity(
+        withMedia(
+          { title: `${scene.title} map`, tags: ["image"], category: "", blocks: [] },
+          { kind: "media", mediaId: media.id, role: "other" },
+        ),
+        "recurring",
+      );
+      this.openCard(entity.id);
     } finally {
       this.setBusy(null);
     }
   }
 
-  async setBattlegroundMap(mediaId: MediaId | null): Promise<void> {
-    const scene = this.requireScene(this.requireSceneId());
-    await this.putScene({
-      ...scene,
-      battleground: { ...scene.battleground, mapMediaId: mediaId },
-    });
-    this.emit();
-  }
-
   async generateTokenArt(entityId: EntityId): Promise<void> {
     const entity = this.requireEntity(entityId);
     this.setBusy({
-      title: "Drawing a token",
+      title: "Generating an image",
       detail: `The image model is painting “${entity.runCard.title}”. The full picture is stored on the card.`,
     });
     try {
@@ -1052,6 +1049,42 @@ export class HostStore {
       withMedia(entity.runCard, { kind: "media", mediaId: media.id, role: "token" }),
     );
     await this.placeVisibleToken(entityId);
+  }
+
+  async insertEntityImage(entityId: EntityId, blob: Blob): Promise<void> {
+    const entity = this.requireEntity(entityId);
+    const media: MediaRecord = {
+      id: newMediaId(),
+      campaignId: entity.campaignId,
+      mimeType: blob.type || "image/png",
+      role: "other",
+      bytes: blob,
+    };
+    await this.putMedia(media);
+    await this.updateRunCard(
+      entityId,
+      withMedia(entity.runCard, { kind: "media", mediaId: media.id, role: "other" }),
+    );
+  }
+
+  async removeEntityImages(entityId: EntityId): Promise<void> {
+    const entity = this.requireEntity(entityId);
+    const mediaIds = mediaBlocksFrom(entity.runCard).map((block) => block.mediaId);
+    if (mediaIds.length === 0) {
+      return;
+    }
+    await this.updateRunCard(entityId, withoutMedia(entity.runCard));
+    for (const mediaId of mediaIds) {
+      await this.deleteMedia(mediaId);
+    }
+    if (this.mediaViewId !== null && mediaIds.includes(this.mediaViewId)) {
+      this.mediaViewId = null;
+    }
+    if (this.encounter?.mapMediaId !== null && this.encounter && mediaIds.includes(this.encounter.mapMediaId)) {
+      await this.setEncounterMap(null);
+      return;
+    }
+    this.emit();
   }
 
   async addToken(entityId: EntityId, visible: boolean): Promise<void> {
@@ -1210,9 +1243,12 @@ export class HostStore {
 
   async dropOnEncounter(entityId: EntityId): Promise<void> {
     const entity = this.requireEntity(entityId);
-    const map = mediaFrom(entity.runCard, "map");
-    if (map) {
-      await this.setEncounterMap(map.mediaId);
+    if (isMapCard(entity)) {
+      const mediaId = mapMediaIdFromCard(entity);
+      if (mediaId === null) {
+        this.setErrorAndThrow(`Map card “${entity.runCard.title}” has no picture`);
+      }
+      await this.setEncounterMap(mediaId);
       return;
     }
     await this.addParticipant(entityId);
@@ -1410,6 +1446,211 @@ export class HostStore {
     this.emit();
   }
 
+  async exportAllArchive(): Promise<Blob> {
+    this.setBusy({
+      title: "Saving everything",
+      detail: "Packing campaigns, docs, and images into a ZIP.",
+    });
+    try {
+      const db = this.requireDb();
+      if (this.currentCampaignId !== null) {
+        await this.persistTableCards();
+      }
+      const campaigns = await db.getAll("campaigns");
+      const entities = await db.getAll("entities");
+      const sessions = await db.getAll("sessions");
+      const scenes = await db.getAll("scenes");
+      const sources = await db.getAll("sources");
+      const chunks = await db.getAll("chunks");
+      const media = await db.getAll("media");
+      const logEntries = await db.getAll("logEntries");
+      const encounters = await db.getAll("encounters");
+
+      const tableCardsByCampaign: Record<string, EntityId[]> = {};
+      for (const campaign of campaigns) {
+        const raw = await db.get("meta", tableCardsMetaKey(campaign.id));
+        const known = new Set(
+          entities.filter((entity) => entity.campaignId === campaign.id).map((entity) => entity.id),
+        );
+        tableCardsByCampaign[campaign.id] =
+          raw === undefined ? [] : parseTableCardIds(raw, known);
+      }
+
+      const mediaBytes = new Map<MediaId, Uint8Array>();
+      for (const record of media) {
+        mediaBytes.set(record.id, await blobToUint8Array(record.bytes));
+      }
+      const sourceBytes = new Map<SourceId, Uint8Array>();
+      for (const source of sources) {
+        if (source.bytes instanceof Blob) {
+          sourceBytes.set(source.id, await blobToUint8Array(source.bytes));
+        }
+      }
+
+      const data: ArchiveData = {
+        schemaVersion: SCHEMA_VERSION,
+        campaigns,
+        entities,
+        sessions,
+        scenes,
+        sources: sources.map((source) => ({
+          id: source.id,
+          campaignId: source.campaignId,
+          title: source.title,
+          kind: source.kind,
+          createdAt: source.createdAt,
+          mimeType: source.mimeType,
+          hasFile: source.bytes instanceof Blob,
+        })),
+        chunks,
+        media: media.map((record) => ({
+          id: record.id,
+          campaignId: record.campaignId,
+          mimeType: record.mimeType,
+          role: record.role,
+        })),
+        logEntries,
+        encounters,
+        tableCardsByCampaign,
+        settings: { ...this.settings, openRouterApiKey: null },
+        currentCampaignId: this.currentCampaignId,
+        currentSessionId: this.currentSessionId,
+      };
+
+      return packArchiveZip({
+        manifest: {
+          format: ARCHIVE_FORMAT,
+          schemaVersion: SCHEMA_VERSION,
+          exportedAt: nowIso(),
+        },
+        data,
+        mediaBytes,
+        sourceBytes,
+      });
+    } finally {
+      this.setBusy(null);
+    }
+  }
+
+  async importAllArchive(blob: Blob): Promise<void> {
+    this.setBusy({
+      title: "Loading archive",
+      detail: "Reading the ZIP and replacing local campaign data.",
+    });
+    try {
+      const unpacked = unpackArchiveZip(await blob.arrayBuffer());
+      const manifest = parseArchiveManifest(unpacked.manifest);
+      const migrated = migrateArchivePayload(
+        unpacked.data,
+        unpacked.mediaFiles,
+        unpacked.sourceFiles,
+        manifest.schemaVersion,
+      );
+      if (migrated.warnings.length > 0) {
+        this.error = formatMigrationWarnings(migrated.warnings);
+      }
+
+      const keptApiKey = this.settings.openRouterApiKey;
+      const db = this.requireDb();
+
+      for (const url of this.objectUrls.values()) {
+        URL.revokeObjectURL(url);
+      }
+      this.objectUrls.clear();
+
+      await db.clear("campaigns");
+      await db.clear("entities");
+      await db.clear("sessions");
+      await db.clear("scenes");
+      await db.clear("sources");
+      await db.clear("chunks");
+      await db.clear("media");
+      await db.clear("logEntries");
+      await db.clear("encounters");
+      await db.clear("backups");
+
+      const metaKeys = await db.getAllKeys("meta");
+      for (const key of metaKeys) {
+        if (key !== SCHEMA_META_KEY) {
+          await db.delete("meta", key);
+        }
+      }
+      await db.put("meta", String(SCHEMA_VERSION), SCHEMA_META_KEY);
+
+      for (const campaign of migrated.data.campaigns) {
+        await db.put("campaigns", campaign);
+      }
+      for (const entity of migrated.data.entities) {
+        await db.put("entities", entity);
+      }
+      for (const session of migrated.data.sessions) {
+        await db.put("sessions", session);
+      }
+      for (const scene of migrated.data.scenes) {
+        await db.put("scenes", scene);
+      }
+      for (const source of migrated.sources) {
+        await db.put("sources", source);
+      }
+      for (const chunk of migrated.data.chunks) {
+        await db.put("chunks", chunk);
+      }
+      for (const record of migrated.media) {
+        await db.put("media", record);
+      }
+      for (const entry of migrated.data.logEntries) {
+        await db.put("logEntries", entry);
+      }
+      for (const encounter of migrated.data.encounters) {
+        await db.put("encounters", encounter);
+      }
+      for (const [campaignId, ids] of Object.entries(migrated.data.tableCardsByCampaign)) {
+        await db.put("meta", JSON.stringify(ids), tableCardsMetaKey(asCampaignId(campaignId)));
+      }
+
+      const nextSettings = {
+        ...migrated.data.settings,
+        openRouterApiKey: keptApiKey,
+      };
+      this.settings = parseAppSettings(nextSettings);
+      await db.put("settings", this.settings, "app");
+
+      if (migrated.data.currentCampaignId) {
+        await db.put("meta", migrated.data.currentCampaignId, META_CAMPAIGN);
+      }
+      if (migrated.data.currentSessionId) {
+        await db.put("meta", migrated.data.currentSessionId, META_SESSION);
+      }
+
+      this.sourceView = null;
+      this.mediaViewId = null;
+      this.urlView = null;
+      this.openedEntityId = null;
+      this.sourcePageById.clear();
+
+      this.campaigns = await db.getAll("campaigns");
+      const startId =
+        migrated.data.currentCampaignId &&
+        this.campaigns.some((campaign) => campaign.id === migrated.data.currentCampaignId)
+          ? migrated.data.currentCampaignId
+          : this.campaigns[0]?.id;
+      if (!startId) {
+        this.setErrorAndThrow("Archive loaded but no campaign remains");
+      }
+      this.markDirty();
+      await this.loadCampaign(startId);
+      if (
+        migrated.data.currentSessionId &&
+        this.sessions.some((session) => session.id === migrated.data.currentSessionId)
+      ) {
+        await this.selectSession(asSessionId(migrated.data.currentSessionId));
+      }
+      this.emit();
+    } finally {
+      this.setBusy(null);
+    }
+  }
+
   mediaUrl(id: MediaId): string | null {
     return this.objectUrls.get(id) ?? null;
   }
@@ -1594,10 +1835,13 @@ export class HostStore {
   }
 
   private async insertEntity(runCard: RunCard, lifecycle: Entity["lifecycle"]): Promise<Entity> {
+    const category =
+      runCard.category.trim().length > 0 ? runCard.category.trim() : this.addCategory.trim();
     const entity: Entity = {
       id: newEntityId(),
       campaignId: this.requireCampaignId(),
-      runCard,
+      sessionId: this.currentSessionId,
+      runCard: { ...runCard, category },
       lifecycle,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -1616,7 +1860,7 @@ export class HostStore {
     if (this.tableCardIds.includes(id)) {
       return false;
     }
-    this.tableCardIds = [...this.tableCardIds, id];
+    this.tableCardIds = [id, ...this.tableCardIds];
     return true;
   }
 
@@ -1661,6 +1905,17 @@ export class HostStore {
     this.rememberMediaUrl(media);
   }
 
+  private async deleteMedia(mediaId: MediaId): Promise<void> {
+    await this.requireDb().delete("media", mediaId);
+    this.markDirty();
+    this.media = this.media.filter((item) => item.id !== mediaId);
+    const url = this.objectUrls.get(mediaId);
+    if (url) {
+      URL.revokeObjectURL(url);
+      this.objectUrls.delete(mediaId);
+    }
+  }
+
   private rememberMediaUrl(media: MediaRecord): void {
     const previous = this.objectUrls.get(media.id);
     if (previous) {
@@ -1674,12 +1929,20 @@ export class HostStore {
   }
 
   private ensureSessionSelection(): void {
-    if (this.currentSessionId && this.sessions.some((session) => session.id === this.currentSessionId)) {
+    if (this.currentSessionId === null) {
+      this.currentSceneId = null;
+      return;
+    }
+    if (this.sessions.some((session) => session.id === this.currentSessionId)) {
       this.ensureSceneSelection();
       return;
     }
     const first = this.sessions[0];
     this.currentSessionId = first?.id ?? null;
+    if (this.currentSessionId === null) {
+      this.currentSceneId = null;
+      return;
+    }
     this.ensureSceneSelection();
   }
 
@@ -1708,8 +1971,17 @@ export class HostStore {
     for (const record of this.media) {
       this.rememberMediaUrl(record);
     }
-    this.currentSessionId = this.sessions[0]?.id ?? null;
-    if (this.currentSessionId) {
+    const metaSession = await db.get("meta", META_SESSION);
+    if (metaSession === "") {
+      this.currentSessionId = null;
+      this.encounter = null;
+      this.logEntries = [];
+    } else if (
+      typeof metaSession === "string" &&
+      metaSession.length > 0 &&
+      this.sessions.some((session) => session.id === metaSession)
+    ) {
+      this.currentSessionId = asSessionId(metaSession);
       this.encounter = readEncounter(await db.get("encounters", this.currentSessionId), warnings);
       if (
         this.encounter?.live &&
@@ -1727,17 +1999,130 @@ export class HostStore {
         readLogEntry,
         warnings,
       );
-      await db.put("meta", this.currentSessionId, META_SESSION);
     } else {
-      this.encounter = null;
-      this.logEntries = [];
+      this.currentSessionId = this.sessions[0]?.id ?? null;
+      if (this.currentSessionId) {
+        this.encounter = readEncounter(await db.get("encounters", this.currentSessionId), warnings);
+        if (
+          this.encounter?.live &&
+          this.encounter.tokens.length === 0 &&
+          this.encounter.participants.length > 0
+        ) {
+          this.encounter = {
+            ...this.encounter,
+            tokens: this.tokensFromRoster(this.encounter.participants),
+          };
+          await this.putEncounter(this.encounter);
+        }
+        this.logEntries = readStored(
+          await db.getAllFromIndex("logEntries", "sessionId", this.currentSessionId),
+          readLogEntry,
+          warnings,
+        );
+        await db.put("meta", this.currentSessionId, META_SESSION);
+      } else {
+        this.encounter = null;
+        this.logEntries = [];
+        await db.put("meta", "", META_SESSION);
+      }
     }
     if (warnings.length > 0) {
       this.note(formatMigrationWarnings(warnings));
     }
     this.ensureSessionSelection();
     await this.loadTableCards(id);
+    await this.ensureDefaultCardCategories();
+    this.syncCategoryFiltersToCampaign();
     this.reindex();
+  }
+
+  private async ensureDefaultCardCategories(): Promise<void> {
+    const campaign = this.campaigns.find((item) => item.id === this.currentCampaignId);
+    if (!campaign) {
+      return;
+    }
+    const current = campaign.cardCategories;
+    const needsDefaults = current.length === 0;
+    const needsReorder =
+      current.length === DEFAULT_CARD_CATEGORIES.length &&
+      DEFAULT_CARD_CATEGORIES.every((name) => current.includes(name)) &&
+      current.some((name, index) => name !== DEFAULT_CARD_CATEGORIES[index]);
+    if (!needsDefaults && !needsReorder) {
+      return;
+    }
+    const next: Campaign = {
+      ...campaign,
+      cardCategories: [...DEFAULT_CARD_CATEGORIES],
+    };
+    await this.requireDb().put("campaigns", next);
+    this.markDirty();
+    this.campaigns = this.campaigns.map((item) => (item.id === next.id ? next : item));
+  }
+
+  private syncCategoryFiltersToCampaign(): void {
+    const campaign = this.campaigns.find((item) => item.id === this.currentCampaignId);
+    const categories = campaign?.cardCategories ?? [];
+    this.categoryFilters = [...categories];
+    if (this.addCategory.length > 0 && !categories.includes(this.addCategory)) {
+      this.addCategory = categories[0] ?? "";
+    }
+    if (this.addCategory.length === 0 && categories.length > 0) {
+      this.addCategory = categories[0] ?? "";
+    }
+  }
+
+  setAddCategory(category: string): void {
+    const campaign = this.requireCampaign();
+    if (category.length > 0 && !campaign.cardCategories.includes(category)) {
+      this.setErrorAndThrow(`Unknown category “${category}”`);
+    }
+    this.addCategory = category;
+    this.emit();
+  }
+
+  async createCardCategory(raw: string): Promise<void> {
+    const name = raw.trim();
+    if (name.length === 0) {
+      this.setErrorAndThrow("Category name is empty");
+    }
+    const campaign = this.requireCampaign();
+    if (campaign.cardCategories.includes(name)) {
+      this.setErrorAndThrow(`Category “${name}” already exists`);
+    }
+    const next: Campaign = {
+      ...campaign,
+      cardCategories: [...campaign.cardCategories, name],
+    };
+    await this.requireDb().put("campaigns", next);
+    this.markDirty();
+    this.campaigns = this.campaigns.map((item) => (item.id === next.id ? next : item));
+    this.addCategory = name;
+    if (!this.categoryFilters.includes(name)) {
+      this.categoryFilters = [...this.categoryFilters, name];
+    }
+    this.emit();
+  }
+
+  toggleCategoryFilter(category: string): void {
+    const campaign = this.requireCampaign();
+    if (!campaign.cardCategories.includes(category)) {
+      this.setErrorAndThrow(`Unknown category “${category}”`);
+    }
+    if (this.categoryFilters.includes(category)) {
+      this.categoryFilters = this.categoryFilters.filter((item) => item !== category);
+    } else {
+      this.categoryFilters = [...this.categoryFilters, category];
+    }
+    this.emit();
+  }
+
+  toggleAllCategoryFilters(): void {
+    const campaign = this.requireCampaign();
+    const categories = campaign.cardCategories;
+    const allSelected =
+      categories.length > 0 && categories.every((name) => this.categoryFilters.includes(name));
+    this.categoryFilters = allSelected ? [] : [...categories];
+    this.emit();
   }
 
   private note(message: string): void {
@@ -1759,8 +2144,8 @@ export class HostStore {
     const campaign: Campaign = {
       id: newCampaignId(),
       name: "Campaign",
-      pinnedFacts: [],
       createdAt: nowIso(),
+      cardCategories: [...DEFAULT_CARD_CATEGORIES],
     };
     await this.requireDb().put("campaigns", campaign);
     this.campaigns = [campaign];
@@ -1834,8 +2219,8 @@ export class HostStore {
       const campaign: Campaign = {
         id: asCampaignId(id),
         name: `Recovered campaign ${id.slice(0, 8)}`,
-        pinnedFacts: [],
         createdAt: nowIso(),
+        cardCategories: [...DEFAULT_CARD_CATEGORIES],
       };
       await db.put("campaigns", campaign);
       this.campaigns = [...this.campaigns, campaign];
@@ -1976,7 +2361,6 @@ export class HostStore {
       focus,
       sources: this.sources,
       chunks: this.chunks,
-      logEntries: this.logEntries,
       encounter: this.encounter,
       settings: this.settings,
       mode: this.mode,
@@ -1991,10 +2375,11 @@ export class HostStore {
       mediaUrls,
       sourceView: this.sourceView,
       mediaViewId: this.mediaViewId,
-      webSearchView: this.webSearchView,
       urlView: this.urlView,
       busy: this.busy,
       lastBackupAt: this.lastBackupAt,
+      categoryFilters: this.categoryFilters,
+      addCategory: this.addCategory,
     };
   }
 
@@ -2007,6 +2392,23 @@ export class HostStore {
       this.scheduleBackup();
     }
   }
+}
+
+function isMapCard(entity: Entity): boolean {
+  if (entity.runCard.tags.includes("image") || entity.runCard.tags.includes("map")) {
+    return true;
+  }
+  return mediaFrom(entity.runCard, "map") !== null;
+}
+
+function mapMediaIdFromCard(entity: Entity): MediaId | null {
+  return (
+    mediaFrom(entity.runCard, "map")?.mediaId ??
+    mediaFrom(entity.runCard, "other")?.mediaId ??
+    mediaFrom(entity.runCard, "portrait")?.mediaId ??
+    mediaFrom(entity.runCard, "token")?.mediaId ??
+    null
+  );
 }
 
 export const hostStore = new HostStore();
