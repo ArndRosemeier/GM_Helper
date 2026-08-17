@@ -5,6 +5,7 @@ import { emptyRunCard, withText } from "../host/runCard";
 export function AddUrlEntity() {
   const { store } = useHost();
   const [url, setUrl] = useState("");
+  const [urlName, setUrlName] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
 
@@ -15,13 +16,22 @@ export function AddUrlEntity() {
         onSubmit={(event) => {
           event.preventDefault();
           store.run(
-            store.createEntityFromUrl(url).then(() => {
+            store.createEntityFromUrl(url, urlName).then(() => {
               setUrl("");
+              setUrlName("");
             }),
           );
         }}
       >
-        <button type="submit">Add URL</button>
+        <div className="inline-form add-entity-row">
+          <button type="submit">Add URL</button>
+          <input
+            value={urlName}
+            onChange={(event) => setUrlName(event.target.value)}
+            placeholder="Card name"
+            aria-label="URL card name"
+          />
+        </div>
         <input
           type="url"
           value={url}
@@ -49,7 +59,7 @@ export function AddUrlEntity() {
           );
         }}
       >
-        <div className="inline-form">
+        <div className="inline-form add-entity-row">
           <button type="submit">Add</button>
           <input
             value={name}

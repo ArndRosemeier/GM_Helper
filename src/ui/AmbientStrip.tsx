@@ -5,9 +5,9 @@ export function AmbientStrip() {
   const { snap } = useHost();
   return (
     <footer className="ambient">
-      <div className="now-scene">
+      <div className="now-session">
         <span className="eyebrow">Now</span>
-        <strong>{snap.scene?.title ?? "No scene"}</strong>
+        <strong>{snap.session?.title ?? "No campaign"}</strong>
       </div>
       {featureRegistry.ambients.map((entry) => {
         const Widget = entry.component;

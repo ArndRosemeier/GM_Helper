@@ -86,7 +86,19 @@ function contentTypeFor(file: string): string {
   }
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const fromEnv = process.env.GM_HELPER_BASE?.trim();
+  const base =
+    fromEnv && fromEnv.length > 0
+      ? fromEnv.endsWith("/")
+        ? fromEnv
+        : `${fromEnv}/`
+      : mode === "domainfactory"
+        ? "/GM_Helper/"
+        : "/";
+
+  return {
+  base,
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -108,7 +120,7 @@ export default defineConfig({
         orientation: "any",
         icons: [
           {
-            src: "/favicon.svg",
+            src: "favicon.svg",
             sizes: "any",
             type: "image/svg+xml",
             purpose: "any",
@@ -121,4 +133,5 @@ export default defineConfig({
       },
     }),
   ],
+};
 });

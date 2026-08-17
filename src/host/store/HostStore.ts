@@ -6,7 +6,6 @@ import {
   newEntityId,
   newMediaId,
   newParticipantId,
-  newSceneId,
   newSessionId,
   newSourceId,
   newTokenId,
@@ -15,7 +14,6 @@ import {
   type EntityId,
   type MediaId,
   type ParticipantId,
-  type SceneId,
   type SessionId,
   type SourceId,
   type TokenId,
@@ -24,7 +22,6 @@ import {
 import {
   nowIso,
   type AppMode,
-  emptyBattleground,
   GRID_SIZE_MAX,
   GRID_SIZE_MIN,
   DEFAULT_CARD_CATEGORIES,
@@ -40,7 +37,6 @@ import {
   type MediaRecord,
   type NowContext,
   type RunCard,
-  type Scene,
   type SearchHit,
   type Session,
   type Source,
@@ -51,6 +47,7 @@ import {
 } from "../types";
 import { migrateImportedCampaign, migrateOpenDatabase, migrationBanner, SCHEMA_VERSION } from "../persist";
 import { migrateArchivePayload, parseArchiveManifest } from "../persist/archiveMigrate";
+import { emptyEncounter, foldScenesIntoEncounters } from "../persist/foldScenes";
 import { SCHEMA_META_KEY } from "../persist/schema";
 import {
   formatMigrationWarnings,
@@ -127,8 +124,6 @@ export type HostSnapshot = {
   openedEntityId: EntityId | null;
   sessions: ReadonlyArray<Session>;
   session: Session | null;
-  scenes: ReadonlyArray<Scene>;
-  scene: Scene | null;
   focus: Entity | null;
   sources: ReadonlyArray<Source>;
   chunks: ReadonlyArray<SourceChunk>;
@@ -167,7 +162,6 @@ export class HostStore {
   private campaigns: Campaign[] = [];
   private entities: Entity[] = [];
   private sessions: Session[] = [];
-  private scenes: Scene[] = [];
   private sources: Source[] = [];
   private chunks: SourceChunk[] = [];
   private logEntries: LogEntry[] = [];
@@ -176,7 +170,6 @@ export class HostStore {
   private settings: AppSettings = DEFAULT_SETTINGS;
   private currentCampaignId: CampaignId | null = null;
   private currentSessionId: SessionId | null = null;
-  private currentSceneId: SceneId | null = null;
   private focusEntityId: EntityId | null = null;
   private tableCardIds: EntityId[] = [];
   private openedEntityId: EntityId | null = null;
@@ -363,13 +356,11 @@ export class HostStore {
     await this.requireDb().put("meta", id, META_SESSION);
     this.encounter = (await this.requireDb().get("encounters", id)) ?? null;
     this.logEntries = await this.requireDb().getAllFromIndex("logEntries", "sessionId", id);
-    this.ensureSceneSelection();
     this.emit();
   }
 
   async clearSession(): Promise<void> {
     this.currentSessionId = null;
-    this.currentSceneId = null;
     this.encounter = null;
     this.logEntries = [];
     await this.requireDb().put("meta", "", META_SESSION);
@@ -391,20 +382,10 @@ export class HostStore {
     return session;
   }
 
-  selectScene(id: SceneId): void {
-    this.currentSceneId = id;
-    const scene = this.scenes.find((item) => item.id === id);
-    const first = scene?.entityIds[0];
-    if (first) {
-      this.focusEntityId = first;
-    }
-    this.emit();
-  }
-
   async deleteSession(id: SessionId): Promise<void> {
     const db = this.requireDb();
-    const scenes = this.scenes.filter((scene) => scene.sessionId === id);
-    for (const scene of scenes) {
+    const leftover = await db.getAllFromIndex("scenes", "sessionId", id);
+    for (const scene of leftover) {
       await db.delete("scenes", scene.id);
     }
     const logs = await db.getAllFromIndex("logEntries", "sessionId", id);
@@ -415,7 +396,6 @@ export class HostStore {
     await db.delete("sessions", id);
     this.markDirty();
     this.sessions = this.sessions.filter((session) => session.id !== id);
-    this.scenes = this.scenes.filter((scene) => scene.sessionId !== id);
     const orphaned = this.entities.filter((entity) => entity.sessionId === id);
     for (const entity of orphaned) {
       await this.putEntity({ ...entity, sessionId: null, updatedAt: nowIso() });
@@ -430,45 +410,6 @@ export class HostStore {
       return;
     }
     await this.clearSession();
-  }
-
-  async deleteScene(id: SceneId): Promise<void> {
-    await this.requireDb().delete("scenes", id);
-    this.markDirty();
-    this.scenes = this.scenes.filter((scene) => scene.id !== id);
-    if (this.currentSceneId === id) {
-      this.ensureSceneSelection();
-    }
-    this.emit();
-  }
-
-  async createScene(title: string, sessionId = this.requireSessionId()): Promise<Scene> {
-    const scene: Scene = {
-      id: newSceneId(),
-      sessionId,
-      campaignId: this.requireCampaignId(),
-      title,
-      description: "",
-      entityIds: [],
-      battleground: emptyBattleground(),
-      order: this.scenes.filter((item) => item.sessionId === sessionId).length,
-    };
-    await this.requireDb().put("scenes", scene);
-    this.markDirty();
-    this.scenes = [...this.scenes, scene];
-    this.currentSceneId = scene.id;
-    this.emit();
-    return scene;
-  }
-
-  async setSceneDescription(id: SceneId, raw: string): Promise<void> {
-    const scene = this.requireScene(id);
-    const description = raw.trim();
-    if (scene.description === description) {
-      return;
-    }
-    await this.putScene({ ...scene, description });
-    this.emit();
   }
 
   setFocus(id: EntityId | null): void {
@@ -499,13 +440,14 @@ export class HostStore {
     return this.insertEntity(runCard, lifecycle);
   }
 
-  async createEntityFromUrl(raw: string): Promise<Entity> {
+  async createEntityFromUrl(raw: string, title = ""): Promise<Entity> {
     const url = parseEntityUrl(raw);
     const href = url.toString();
     const source = await this.ensureWebSource();
+    const cardTitle = title.trim().length > 0 ? title.trim() : titleFromEntityUrl(url);
     const entity = await this.createEntity(
       withProvenance(
-        withText({ title: titleFromEntityUrl(url), tags: ["web"], category: "", blocks: [] }, href),
+        withText({ title: cardTitle, tags: ["web"], category: "", blocks: [] }, href),
         {
           kind: "provenance",
           sourceId: source.id,
@@ -584,28 +526,21 @@ export class HostStore {
     await this.requireDb().delete("entities", id);
     this.markDirty();
     this.entities = this.entities.filter((entity) => entity.id !== id);
-    for (const scene of this.scenes) {
-      const entityIds = scene.entityIds.filter((entityId) => entityId !== id);
-      const tokens = scene.battleground.tokens.filter((token) => token.entityId !== id);
-      if (entityIds.length === scene.entityIds.length && tokens.length === scene.battleground.tokens.length) {
-        continue;
-      }
-      await this.putScene({
-        ...scene,
-        entityIds,
-        battleground: { ...scene.battleground, tokens },
-      });
-    }
     if (this.encounter) {
       const participants = this.encounter.participants.filter((participant) => participant.entityId !== id);
-      if (participants.length === 0) {
+      const tokens = this.encounter.tokens.filter((token) => token.entityId !== id);
+      if (participants.length === 0 && this.encounter.participants.length > 0) {
         await this.endEncounter();
-      } else if (participants.length !== this.encounter.participants.length) {
+      } else if (
+        participants.length !== this.encounter.participants.length ||
+        tokens.length !== this.encounter.tokens.length
+      ) {
         await this.putEncounter({
           ...this.encounter,
           participants,
-          activeIndex: Math.min(this.encounter.activeIndex, participants.length - 1),
-          tokens: this.encounter.tokens.filter((token) => token.entityId !== id),
+          activeIndex:
+            participants.length === 0 ? 0 : Math.min(this.encounter.activeIndex, participants.length - 1),
+          tokens,
         });
       }
     }
@@ -618,19 +553,6 @@ export class HostStore {
     }
     await this.persistTableCards();
     this.reindex();
-    this.emit();
-  }
-
-  async attachEntityToScene(entityId: EntityId, sceneId = this.requireSceneId()): Promise<void> {
-    const scene = this.requireScene(sceneId);
-    if (scene.entityIds.includes(entityId)) {
-      this.focusEntityId = entityId;
-      this.emit();
-      return;
-    }
-    const next: Scene = { ...scene, entityIds: [...scene.entityIds, entityId] };
-    await this.putScene(next);
-    this.focusEntityId = entityId;
     this.emit();
   }
 
@@ -901,8 +823,8 @@ export class HostStore {
             title: "Asking OpenRouter",
             detail:
               ask.length > 0
-                ? `Writing someone who matches “${ask}” and the scene notes. The card appears when the text is ready.`
-                : "Writing someone who fits the scene notes. The card appears when the text is ready.",
+                ? `Writing someone who matches “${ask}”. The card appears when the text is ready.`
+                : "Writing someone for the table. The card appears when the text is ready.",
           }
         : {
             title: "Making someone here",
@@ -912,19 +834,18 @@ export class HostStore {
     try {
     let card = localNpcCard();
     if (useAi) {
-      const scene = this.scenePromptContext();
       const raw = await completeJson(this.requireOpenRouter(), [
         {
           role: "system",
           content:
-            "Create a brief NPC for a live RPG table. Return JSON: {title, look, want, secret, firstLine}. No stats unless implied by the ask. Fit the person to the scene notes. If the GM gave a hint, follow it.",
+            "Create a brief NPC for a live RPG table. Return JSON: {title, look, want, secret, firstLine}. No stats unless implied by the ask. If the GM gave a hint, follow it.",
         },
         {
           role: "user",
           content:
             ask.length > 0
-              ? `Someone the party just stopped to talk to. The GM wants: ${ask}.\n\nCurrent scene:\n${scene}`
-              : `Someone the party just stopped to talk to.\n\nCurrent scene:\n${scene}`,
+              ? `Someone the party just stopped to talk to. The GM wants: ${ask}.`
+              : "Someone the party just stopped to talk to.",
         },
       ]);
       const npc = parseGeneratedNpc(raw);
@@ -958,7 +879,7 @@ export class HostStore {
     const entity = this.requireEntity(entityId);
     const blob = await generateImagePng(
       this.requireOpenRouter(),
-      `Tabletop RPG portrait, no text, of ${entity.runCard.title}. ${entity.runCard.blocks
+      `Portrait of ${entity.runCard.title}, no text. ${entity.runCard.blocks
         .filter((block) => block.kind === "text")
         .map((block) => block.body)
         .join(" ")}`,
@@ -981,15 +902,15 @@ export class HostStore {
       detail: "The image model is drawing a map card. This can take a minute.",
     });
     try {
-      const scene = this.requireScene(this.requireSceneId());
+      const session = this.requireSession();
       const blob = await generateImagePng(
         this.requireOpenRouter(),
-        `Top-down battle map sketch, no text labels, for a scene called ${scene.title}. ${scene.description.trim()} Clear floor space for tokens.`,
+        `Top-down battle map sketch, no text labels, for ${session.title}. Clear floor space.`,
         "16:9",
       );
       const media: MediaRecord = {
         id: newMediaId(),
-        campaignId: scene.campaignId,
+        campaignId: session.campaignId,
         mimeType: blob.type || "image/png",
         role: "other",
         bytes: blob,
@@ -997,7 +918,7 @@ export class HostStore {
       await this.putMedia(media);
       const entity = await this.createEntity(
         withMedia(
-          { title: `${scene.title} map`, tags: ["image"], category: "", blocks: [] },
+          { title: `${session.title} map`, tags: ["image"], category: "", blocks: [] },
           { kind: "media", mediaId: media.id, role: "other" },
         ),
         "recurring",
@@ -1025,7 +946,7 @@ export class HostStore {
         .join(" ");
       const blob = await generateImagePng(
         this.requireOpenRouter(),
-        `Tabletop RPG character or object, no text, centered, suitable for a circular miniature token, of ${entity.runCard.title}. ${text} ${facts}`,
+        `${entity.runCard.title}, no text. ${text} ${facts}`,
         "1:1",
       );
       await this.saveTokenArt(entityId, blob);
@@ -1088,7 +1009,7 @@ export class HostStore {
   }
 
   async addToken(entityId: EntityId, visible: boolean): Promise<void> {
-    const scene = this.requireScene(this.requireSceneId());
+    const encounter = await this.ensureEncounter();
     const entity = this.requireEntity(entityId);
     const token = {
       id: newTokenId(),
@@ -1099,25 +1020,25 @@ export class HostStore {
       visible,
       label: entity.runCard.title,
     };
-    await this.putScene({
-      ...scene,
-      battleground: { ...scene.battleground, tokens: [...scene.battleground.tokens, token] },
+    await this.putEncounter({
+      ...encounter,
+      tokens: [...encounter.tokens, token],
     });
     this.emit();
   }
 
   private async placeVisibleToken(entityId: EntityId): Promise<void> {
-    if (this.currentSceneId === null) {
+    if (this.currentSessionId === null) {
       return;
     }
-    const scene = this.requireScene(this.currentSceneId);
-    if (scene.battleground.tokens.some((token) => token.entityId === entityId)) {
-      const tokens = scene.battleground.tokens.map((token) =>
+    const encounter = await this.ensureEncounter();
+    if (encounter.tokens.some((token) => token.entityId === entityId)) {
+      const tokens = encounter.tokens.map((token) =>
         token.entityId === entityId ? { ...token, visible: true } : token,
       );
-      await this.putScene({
-        ...scene,
-        battleground: { ...scene.battleground, tokens },
+      await this.putEncounter({
+        ...encounter,
+        tokens,
       });
       this.emit();
       return;
@@ -1126,23 +1047,10 @@ export class HostStore {
   }
 
   async moveToken(tokenId: TokenId, x: number, y: number): Promise<void> {
-    if (this.encounter?.live) {
-      await this.putEncounter({
-        ...this.encounter,
-        tokens: this.mapEncounterToken(this.encounter, tokenId, (token) => ({ ...token, x, y })),
-      });
-      this.emit();
-      return;
-    }
-    const scene = this.requireScene(this.requireSceneId());
-    await this.putScene({
-      ...scene,
-      battleground: {
-        ...scene.battleground,
-        tokens: scene.battleground.tokens.map((token) =>
-          token.id === tokenId ? { ...token, x, y } : token,
-        ),
-      },
+    const encounter = await this.ensureEncounter();
+    await this.putEncounter({
+      ...encounter,
+      tokens: this.mapEncounterToken(encounter, tokenId, (token) => ({ ...token, x, y })),
     });
     this.emit();
   }
@@ -1153,13 +1061,13 @@ export class HostStore {
         `Grid scale must be off, or an integer from ${String(GRID_SIZE_MIN)} to ${String(GRID_SIZE_MAX)}`,
       );
     }
-    const scene = this.requireScene(this.requireSceneId());
-    if (scene.battleground.gridSize === size) {
+    const encounter = await this.ensureEncounter();
+    if (encounter.gridSize === size) {
       return;
     }
-    await this.putScene({
-      ...scene,
-      battleground: { ...scene.battleground, gridSize: size },
+    await this.putEncounter({
+      ...encounter,
+      gridSize: size,
     });
     this.emit();
   }
@@ -1170,35 +1078,22 @@ export class HostStore {
         `Token scale must be an integer from ${String(GRID_SIZE_MIN)} to ${String(GRID_SIZE_MAX)}`,
       );
     }
-    const scene = this.requireScene(this.requireSceneId());
-    if (scene.battleground.tokenSize === size) {
+    const encounter = await this.ensureEncounter();
+    if (encounter.tokenSize === size) {
       return;
     }
-    await this.putScene({
-      ...scene,
-      battleground: { ...scene.battleground, tokenSize: size },
+    await this.putEncounter({
+      ...encounter,
+      tokenSize: size,
     });
     this.emit();
   }
 
   async setTokenVisible(tokenId: TokenId, visible: boolean): Promise<void> {
-    if (this.encounter?.live) {
-      await this.putEncounter({
-        ...this.encounter,
-        tokens: this.mapEncounterToken(this.encounter, tokenId, (token) => ({ ...token, visible })),
-      });
-      this.emit();
-      return;
-    }
-    const scene = this.requireScene(this.requireSceneId());
-    await this.putScene({
-      ...scene,
-      battleground: {
-        ...scene.battleground,
-        tokens: scene.battleground.tokens.map((token) =>
-          token.id === tokenId ? { ...token, visible } : token,
-        ),
-      },
+    const encounter = await this.ensureEncounter();
+    await this.putEncounter({
+      ...encounter,
+      tokens: this.mapEncounterToken(encounter, tokenId, (token) => ({ ...token, visible })),
     });
     this.emit();
   }
@@ -1208,12 +1103,8 @@ export class HostStore {
     const existing = this.encounter;
     if (!existing) {
       await this.putEncounter({
-        sessionId: this.requireSessionId(),
+        ...emptyEncounter(this.requireSessionId()),
         participants: [extra],
-        activeIndex: 0,
-        mapMediaId: null,
-        live: false,
-        tokens: [],
       });
       this.emit();
       return;
@@ -1258,12 +1149,8 @@ export class HostStore {
     const existing = this.encounter;
     if (!existing) {
       await this.putEncounter({
-        sessionId: this.requireSessionId(),
-        participants: [],
-        activeIndex: 0,
+        ...emptyEncounter(this.requireSessionId()),
         mapMediaId,
-        live: false,
-        tokens: [],
       });
       this.emit();
       return;
@@ -1396,7 +1283,7 @@ export class HostStore {
       campaign: this.requireCampaign(),
       entities: this.entities,
       sessions: this.sessions,
-      scenes: this.scenes,
+      scenes: [],
       sources: this.sources.map((source) => ({ ...source, bytes: null })),
       chunks: this.chunks,
       logEntries: this.logEntries,
@@ -1425,9 +1312,6 @@ export class HostStore {
     for (const session of payload.sessions) {
       await db.put("sessions", session);
     }
-    for (const scene of payload.scenes) {
-      await db.put("scenes", scene);
-    }
     for (const source of payload.sources) {
       await db.put("sources", source);
     }
@@ -1437,8 +1321,8 @@ export class HostStore {
     for (const entry of payload.logEntries) {
       await db.put("logEntries", entry);
     }
-    if (payload.encounter) {
-      await db.put("encounters", payload.encounter);
+    for (const encounter of migrated.encounters) {
+      await db.put("encounters", encounter);
     }
     this.campaigns = await db.getAll("campaigns");
     this.markDirty();
@@ -1459,7 +1343,6 @@ export class HostStore {
       const campaigns = await db.getAll("campaigns");
       const entities = await db.getAll("entities");
       const sessions = await db.getAll("sessions");
-      const scenes = await db.getAll("scenes");
       const sources = await db.getAll("sources");
       const chunks = await db.getAll("chunks");
       const media = await db.getAll("media");
@@ -1492,7 +1375,7 @@ export class HostStore {
         campaigns,
         entities,
         sessions,
-        scenes,
+        scenes: [],
         sources: sources.map((source) => ({
           id: source.id,
           campaignId: source.campaignId,
@@ -1585,9 +1468,6 @@ export class HostStore {
       }
       for (const session of migrated.data.sessions) {
         await db.put("sessions", session);
-      }
-      for (const scene of migrated.data.scenes) {
-        await db.put("scenes", scene);
       }
       for (const source of migrated.sources) {
         await db.put("sources", source);
@@ -1690,11 +1570,12 @@ export class HostStore {
     return this.currentSessionId;
   }
 
-  private requireSceneId(): SceneId {
-    if (!this.currentSceneId) {
-      this.setErrorAndThrow("No scene selected");
+  private requireSession(): Session {
+    const session = this.sessions.find((item) => item.id === this.currentSessionId);
+    if (!session) {
+      this.setErrorAndThrow("No session selected");
     }
-    return this.currentSceneId;
+    return session;
   }
 
   private requireEntity(id: EntityId): Entity {
@@ -1703,14 +1584,6 @@ export class HostStore {
       this.setErrorAndThrow(`Entity ${id} is missing`);
     }
     return entity;
-  }
-
-  private requireScene(id: SceneId): Scene {
-    const scene = this.scenes.find((item) => item.id === id);
-    if (!scene) {
-      this.setErrorAndThrow(`Scene ${id} is missing`);
-    }
-    return scene;
   }
 
   private requireChunk(id: ChunkId): SourceChunk {
@@ -1759,15 +1632,13 @@ export class HostStore {
     return source;
   }
 
-  private scenePromptContext(): string {
-    const scene = this.scenes.find((item) => item.id === this.currentSceneId);
-    if (!scene) {
-      return "unknown place";
+  private async ensureEncounter(): Promise<EncounterState> {
+    if (this.encounter) {
+      return this.encounter;
     }
-    if (scene.description.length === 0) {
-      return scene.title;
-    }
-    return `${scene.title}\n${scene.description}`;
+    const encounter = emptyEncounter(this.requireSessionId());
+    await this.putEncounter(encounter);
+    return encounter;
   }
 
   private participantFromEntity(entityId: EntityId): EncounterParticipant {
@@ -1803,10 +1674,9 @@ export class HostStore {
   private tokensFromRoster(
     participants: ReadonlyArray<EncounterParticipant>,
   ): BattlegroundToken[] {
-    const scene = this.currentSceneId === null ? null : this.scenes.find((item) => item.id === this.currentSceneId);
     const pool = new Map<EntityId, BattlegroundToken[]>();
-    if (scene) {
-      for (const token of scene.battleground.tokens) {
+    if (this.encounter) {
+      for (const token of this.encounter.tokens) {
         const list = pool.get(token.entityId) ?? [];
         list.push(token);
         pool.set(token.entityId, list);
@@ -1886,12 +1756,6 @@ export class HostStore {
     this.entities = next;
   }
 
-  private async putScene(scene: Scene): Promise<void> {
-    await this.requireDb().put("scenes", scene);
-    this.markDirty();
-    this.scenes = this.scenes.map((item) => (item.id === scene.id ? scene : item));
-  }
-
   private async putEncounter(encounter: EncounterState): Promise<void> {
     await this.requireDb().put("encounters", encounter);
     this.markDirty();
@@ -1930,31 +1794,12 @@ export class HostStore {
 
   private ensureSessionSelection(): void {
     if (this.currentSessionId === null) {
-      this.currentSceneId = null;
       return;
     }
     if (this.sessions.some((session) => session.id === this.currentSessionId)) {
-      this.ensureSceneSelection();
       return;
     }
-    const first = this.sessions[0];
-    this.currentSessionId = first?.id ?? null;
-    if (this.currentSessionId === null) {
-      this.currentSceneId = null;
-      return;
-    }
-    this.ensureSceneSelection();
-  }
-
-  private ensureSceneSelection(): void {
-    const inSession = this.scenes.filter((scene) => scene.sessionId === this.currentSessionId);
-    if (this.currentSceneId && inSession.some((scene) => scene.id === this.currentSceneId)) {
-      return;
-    }
-    const first = [...inSession].sort((a, b) => a.order - b.order)[0];
-    this.currentSceneId = first?.id ?? null;
-    const focus = first?.entityIds[0];
-    this.focusEntityId = focus ?? this.entities[0]?.id ?? null;
+    this.currentSessionId = this.sessions[0]?.id ?? null;
   }
 
   private async loadCampaign(id: CampaignId): Promise<void> {
@@ -1964,7 +1809,6 @@ export class HostStore {
     const warnings: MigrationWarning[] = [];
     this.entities = readStored(await db.getAllFromIndex("entities", "campaignId", id), readEntity, warnings);
     this.sessions = readStored(await db.getAllFromIndex("sessions", "campaignId", id), readSession, warnings);
-    this.scenes = readStored(await db.getAllFromIndex("scenes", "campaignId", id), readScene, warnings);
     this.sources = readStored(await db.getAllFromIndex("sources", "campaignId", id), readSource, warnings);
     this.chunks = readStored(await db.getAllFromIndex("chunks", "campaignId", id), readChunk, warnings);
     this.media = readStored(await db.getAllFromIndex("media", "campaignId", id), readMedia, warnings);
@@ -2243,8 +2087,18 @@ export class HostStore {
     for (const session of readStored(backup.sessions, readSession, warnings)) {
       await db.put("sessions", session);
     }
-    for (const scene of readStored(backup.scenes, readScene, warnings)) {
-      await db.put("scenes", scene);
+    const backupScenes = readStored(backup.scenes, readScene, warnings);
+    const backupEncounter = readEncounter(backup.encounter, warnings);
+    if (backupScenes.length > 0) {
+      const folded = foldScenesIntoEncounters(
+        backupScenes,
+        backupEncounter ? [backupEncounter] : [],
+      );
+      for (const encounter of folded) {
+        await db.put("encounters", encounter);
+      }
+    } else if (backupEncounter) {
+      await db.put("encounters", backupEncounter);
     }
     for (const source of readStored(backup.sources, readSource, warnings)) {
       await db.put("sources", source);
@@ -2257,10 +2111,6 @@ export class HostStore {
     }
     for (const entry of readStored(backup.logEntries, readLogEntry, warnings)) {
       await db.put("logEntries", entry);
-    }
-    const encounter = readEncounter(backup.encounter, warnings);
-    if (encounter) {
-      await db.put("encounters", encounter);
     }
     await db.put("meta", JSON.stringify(backup.tableCardIds), tableCardsMetaKey(backup.campaignId));
     if (!this.campaigns.some((item) => item.id === campaign.id)) {
@@ -2309,7 +2159,7 @@ export class HostStore {
       campaign,
       entities: this.entities,
       sessions: this.sessions,
-      scenes: this.scenes,
+      scenes: [],
       sources: this.sources,
       chunks: this.chunks,
       media: this.media,
@@ -2325,7 +2175,6 @@ export class HostStore {
   private createSnapshot(): HostSnapshot {
     const campaign = this.campaigns.find((item) => item.id === this.currentCampaignId) ?? null;
     const session = this.sessions.find((item) => item.id === this.currentSessionId) ?? null;
-    const scene = this.scenes.find((item) => item.id === this.currentSceneId) ?? null;
     const focus = this.entities.find((item) => item.id === this.focusEntityId) ?? null;
     const tableCards: Entity[] = [];
     const missingCards: EntityId[] = [];
@@ -2356,8 +2205,6 @@ export class HostStore {
       openedEntityId: this.openedEntityId,
       sessions: this.sessions,
       session,
-      scenes: this.scenes,
-      scene,
       focus,
       sources: this.sources,
       chunks: this.chunks,
@@ -2368,7 +2215,6 @@ export class HostStore {
       now: {
         campaignId: this.currentCampaignId,
         sessionId: this.currentSessionId,
-        sceneId: this.currentSceneId,
         focusEntityId: this.focusEntityId,
         surface: this.surface,
       },

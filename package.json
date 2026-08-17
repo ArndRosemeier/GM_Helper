@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:domainfactory": "tsc -b && vite build --mode domainfactory",
+    "deploy:domainfactory": "powershell -ExecutionPolicy Bypass -File deploy-clean.ps1",
     "lint": "oxlint",
     "preview": "vite preview"
   },

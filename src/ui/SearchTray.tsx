@@ -1,21 +1,6 @@
 import { useMemo, useState } from "react";
 import { useHost } from "../host/HostContext";
-import type { ChunkId } from "../host/ids";
-import type { Source, SourceChunk } from "../host/types";
-
-function chunkOrigin(
-  chunks: ReadonlyArray<SourceChunk>,
-  sources: ReadonlyArray<Source>,
-  chunkId: ChunkId,
-): string {
-  const chunk = chunks.find((item) => item.id === chunkId);
-  if (!chunk) {
-    return "Source page";
-  }
-  const source = sources.find((item) => item.id === chunk.sourceId);
-  const title = source?.title ?? "Source";
-  return chunk.page !== null ? `${title} p.${String(chunk.page)}` : title;
-}
+import type { Source } from "../host/types";
 
 function isDocSource(source: Source): boolean {
   return source.kind !== "manual";
@@ -72,9 +57,6 @@ export function SearchTray() {
               }}
             >
               <strong>{hit.title}</strong>
-              {hit.kind === "chunk" && hit.chunkId ? (
-                <em>{chunkOrigin(snap.chunks, snap.sources, hit.chunkId)}</em>
-              ) : null}
               <span>{hit.snippet}</span>
             </button>
           </li>

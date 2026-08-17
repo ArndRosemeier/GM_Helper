@@ -288,6 +288,7 @@ export function readEncounter(value: unknown, warnings: MigrationWarning[]): Enc
   const participants = readParticipants(record.participants, sessionId, warnings);
   const index = typeof activeIndex === "number" && Number.isInteger(activeIndex) ? activeIndex : 0;
   const mapMediaId = record.mapMediaId;
+  const board = emptyBattleground();
   return {
     sessionId: asSessionId(sessionId),
     participants,
@@ -295,6 +296,11 @@ export function readEncounter(value: unknown, warnings: MigrationWarning[]): Enc
     mapMediaId: typeof mapMediaId === "string" ? asMediaId(mapMediaId) : null,
     live: record.live === true,
     tokens: readTokens(record.tokens, sessionId, warnings, "encounters"),
+    gridSize:
+      record.gridSize === undefined
+        ? board.gridSize
+        : readGridSize(record.gridSize, sessionId, warnings),
+    tokenSize: readTokenSize(record.tokenSize, record.gridSize, sessionId, warnings),
   };
 }
 

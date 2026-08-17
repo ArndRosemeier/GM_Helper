@@ -12,7 +12,6 @@ export function SourceViewer() {
   const [htmlUrl, setHtmlUrl] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [textBody, setTextBody] = useState<string | null>(null);
-  const [pageImages, setPageImages] = useState<ReadonlyArray<PdfPageImage>>([]);
   const [selectedImage, setSelectedImage] = useState<PdfPageImage | null>(null);
   const [viewPage, setViewPage] = useState(view?.page ?? 1);
 
@@ -27,7 +26,6 @@ export function SourceViewer() {
 
   useEffect(() => {
     setSelectedImage(null);
-    setPageImages([]);
   }, [sourceId, viewPage]);
 
   useEffect(() => {
@@ -121,22 +119,9 @@ export function SourceViewer() {
     );
   };
 
-  const pictureHint =
-    source?.kind === "pdf"
-      ? pageImages.length === 0
-        ? "no pictures in result"
-        : "Select picture for card"
-      : source?.kind === "image"
-        ? "Select picture for card"
-        : "no pictures in result";
-
   return (
     <section className="source-viewer">
       <header className="source-viewer-bar">
-        <div>
-          <p className="eyebrow">Source</p>
-          <h2>{source?.title ?? "Missing source"}</h2>
-        </div>
         {source?.kind === "pdf" && pdf ? (
           <PdfPageNav
             page={viewPage}
@@ -146,10 +131,13 @@ export function SourceViewer() {
           />
         ) : null}
         <div className="card-actions source-save-row">
-          <button type="button" onClick={saveCard}>
-            Save card
+          <button
+            type="button"
+            title="You can select a picture on this page to become the picture for this card."
+            onClick={saveCard}
+          >
+            Add card
           </button>
-          <p className="muted source-picture-hint">{pictureHint}</p>
           <button type="button" onClick={() => store.closeSourceView()}>
             Close
           </button>
@@ -166,7 +154,6 @@ export function SourceViewer() {
           pickImages
           selectedImageId={selectedImage?.id ?? null}
           onSelectImage={setSelectedImage}
-          onImagesChange={setPageImages}
         />
       ) : null}
       {textBody !== null ? <pre className="source-text">{textBody}</pre> : null}

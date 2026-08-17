@@ -21,6 +21,7 @@ import {
   readSession,
   readSource,
 } from "./readRecord";
+import { foldScenesIntoEncounters } from "./foldScenes";
 import { parseStoredSchemaVersion, SCHEMA_VERSION } from "./schema";
 import type { MigrationWarning } from "./warnings";
 
@@ -89,7 +90,10 @@ export function migrateArchivePayload(
   const scenes = readList(record.scenes, readScene, warnings);
   const chunks = readList(record.chunks, readChunk, warnings);
   const logEntries = readList(record.logEntries, readLogEntry, warnings);
-  const encounters = readEncounterList(record.encounters, warnings);
+  const encounters = foldScenesIntoEncounters(
+    scenes,
+    readEncounterList(record.encounters, warnings),
+  );
 
   const sourceMetas = readArchiveSources(record.sources, warnings);
   const sources: Source[] = [];
@@ -147,7 +151,7 @@ export function migrateArchivePayload(
     campaigns,
     entities,
     sessions,
-    scenes,
+    scenes: [],
     sources: sources.map((source) => ({
       id: source.id,
       campaignId: source.campaignId,

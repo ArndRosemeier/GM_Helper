@@ -11,6 +11,7 @@ import {
   readSession,
   readSource,
 } from "./readRecord";
+import { foldScenesIntoEncounters } from "./foldScenes";
 import { parseStoredSchemaVersion, SCHEMA_META_KEY, SCHEMA_VERSION } from "./schema";
 import { formatMigrationWarnings, type MigrationReport, type MigrationWarning } from "./warnings";
 
@@ -34,6 +35,7 @@ export async function migrateOpenDatabase(db: GmDb): Promise<MigrationReport> {
 
 export function migrateImportedCampaign(value: unknown): {
   payload: CampaignExport;
+  encounters: ReadonlyArray<import("../types").EncounterState>;
   warnings: ReadonlyArray<MigrationWarning>;
 } {
   if (typeof value !== "object" || value === null) {
@@ -51,18 +53,21 @@ export function migrateImportedCampaign(value: unknown): {
   if (!campaign) {
     throw new Error("Import has no readable campaign record");
   }
+  const scenes = readList(record.scenes, readScene, warnings);
+  const encounter = readEncounter(record.encounter, warnings);
+  const folded = foldScenesIntoEncounters(scenes, encounter ? [encounter] : []);
   const payload: CampaignExport = {
     version: SCHEMA_VERSION,
     campaign,
     entities: readList(record.entities, readEntity, warnings),
     sessions: readList(record.sessions, readSession, warnings),
-    scenes: readList(record.scenes, readScene, warnings),
+    scenes: [],
     sources: readList(record.sources, readSource, warnings),
     chunks: readList(record.chunks, readChunk, warnings),
     logEntries: readList(record.logEntries, readLogEntry, warnings),
-    encounter: readEncounter(record.encounter, warnings),
+    encounter: folded[0] ?? null,
   };
-  return { payload, warnings };
+  return { payload, encounters: folded, warnings };
 }
 
 export function migrationBanner(report: MigrationReport): string | null {

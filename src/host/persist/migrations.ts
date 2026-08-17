@@ -11,8 +11,10 @@ import {
   readSettings,
   readSource,
 } from "./readRecord";
+import { foldScenesIntoEncounters } from "./foldScenes";
 import { SCHEMA_VERSION } from "./schema";
 import type { MigrationWarning } from "./warnings";
+import type { EncounterState, Scene } from "../types";
 
 /**
  * One step in the document-schema chain.
@@ -82,6 +84,12 @@ export const SCHEMA_MIGRATIONS: ReadonlyArray<SchemaMigration> = [
     to: 8,
     reason: "Cards belong to a session (UI campaign) or are global (sessionId null).",
     apply: migrate7to8,
+  },
+  {
+    from: 8,
+    to: 9,
+    reason: "Scenes removed. Board prefs and idle tokens live on the encounter; scenes store is cleared.",
+    apply: migrate8to9,
   },
 ];
 
@@ -256,6 +264,32 @@ async function migrate7to8(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
     if (next) {
       await db.put("entities", next);
     }
+  }
+  return warnings;
+}
+
+async function migrate8to9(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  const scenes: Scene[] = [];
+  for (const raw of await db.getAll("scenes")) {
+    const next = readScene(raw, warnings);
+    if (next) {
+      scenes.push(next);
+    }
+  }
+  const encounters: EncounterState[] = [];
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (next) {
+      encounters.push(next);
+    }
+  }
+  const folded = foldScenesIntoEncounters(scenes, encounters);
+  for (const encounter of folded) {
+    await db.put("encounters", encounter);
+  }
+  for (const scene of scenes) {
+    await db.delete("scenes", scene.id);
   }
   return warnings;
 }

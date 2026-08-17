@@ -248,12 +248,14 @@ export type EncounterState = {
   mapMediaId: MediaId | null;
   live: boolean;
   tokens: ReadonlyArray<BattlegroundToken>;
+  /** Cell size in CSS pixels. `null` hides the grid. */
+  gridSize: number | null;
+  tokenSize: number;
 };
 
 export type NowContext = {
   campaignId: CampaignId | null;
   sessionId: SessionId | null;
-  sceneId: SceneId | null;
   focusEntityId: EntityId | null;
   surface: Surface;
 };

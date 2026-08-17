@@ -12,14 +12,11 @@ export function TableSurface() {
   const viewport = useRef<HTMLDivElement>(null);
   const board = useRef<HTMLDivElement>(null);
   const camera = useBoardPanZoom(viewport);
-  const scene = snap.scene;
   const mapId = snap.encounter?.mapMediaId ?? null;
   const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
-  const tokens = (
-    snap.encounter?.live === true ? snap.encounter.tokens : (scene?.battleground.tokens ?? [])
-  ).filter((token) => token.visible);
-  const gridSize = scene?.battleground.gridSize ?? null;
-  const tokenSize = scene?.battleground.tokenSize ?? GRID_SIZE_DEFAULT;
+  const tokens = (snap.encounter?.tokens ?? []).filter((token) => token.visible);
+  const gridSize = snap.encounter?.gridSize ?? null;
+  const tokenSize = snap.encounter?.tokenSize ?? GRID_SIZE_DEFAULT;
 
   const onTokenPointerDown = (event: ReactPointerEvent<HTMLButtonElement>): void => {
     event.stopPropagation();
@@ -101,7 +98,7 @@ export function TableSurface() {
           ) : null}
         </div>
       </div>
-      {scene ? <BoardScaleControls compact /> : null}
+      {snap.session ? <BoardScaleControls compact /> : null}
       <button type="button" className="lift" onClick={() => store.setSurface("gm")}>
         Lift
       </button>
@@ -115,16 +112,17 @@ function clamp01(value: number): number {
 
 function BoardScaleControls({ compact = false }: { compact?: boolean }) {
   const { store, snap } = useHost();
-  const scene = snap.scene;
-  if (!scene) {
+  if (!snap.session) {
     return null;
   }
-  const lastGrid = useRef(scene.battleground.gridSize ?? GRID_SIZE_DEFAULT);
-  if (scene.battleground.gridSize !== null) {
-    lastGrid.current = scene.battleground.gridSize;
+  const encounter = snap.encounter;
+  const lastGrid = useRef(encounter?.gridSize ?? GRID_SIZE_DEFAULT);
+  if (encounter?.gridSize !== null && encounter?.gridSize !== undefined) {
+    lastGrid.current = encounter.gridSize;
   }
-  const gridOn = scene.battleground.gridSize !== null;
-  const gridSize = scene.battleground.gridSize ?? lastGrid.current;
+  const gridOn = encounter?.gridSize !== null && encounter?.gridSize !== undefined;
+  const gridSize = encounter?.gridSize ?? lastGrid.current;
+  const tokenSize = encounter?.tokenSize ?? GRID_SIZE_DEFAULT;
   return (
     <div className={compact ? "board-scales compact" : "board-scales"}>
       <label className="grid-scale">
@@ -134,7 +132,7 @@ function BoardScaleControls({ compact = false }: { compact?: boolean }) {
           min={GRID_SIZE_MIN}
           max={GRID_SIZE_MAX}
           step={2}
-          value={scene.battleground.tokenSize}
+          value={tokenSize}
           aria-label="Token scale"
           onChange={(event) => store.run(store.setTokenSize(Number(event.target.value)))}
         />
@@ -211,10 +209,10 @@ function BattlegroundTokenRow({
 
 export function BattlegroundPrep() {
   const { store, snap } = useHost();
-  const scene = snap.scene;
-  if (!scene) {
+  if (!snap.session) {
     return null;
   }
+  const tokens = snap.encounter?.tokens ?? [];
   return (
     <section className="bg-prep">
       <h3>Battleground</h3>
@@ -234,7 +232,7 @@ export function BattlegroundPrep() {
       </div>
       <BoardScaleControls />
       <ul className="token-list">
-        {scene.battleground.tokens.map((token) => {
+        {tokens.map((token) => {
           const owner = snap.entities.find((item) => item.id === token.entityId);
           return (
             <BattlegroundTokenRow

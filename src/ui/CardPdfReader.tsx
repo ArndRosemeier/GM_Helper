@@ -49,10 +49,11 @@ export function CardPdfReader({
 
   return (
     <div className="card-pdf">
-      <div className="source-viewer-bar">
-        <p className="muted">{source.title}</p>
-        {pdf ? <PdfPageNav page={page} pageCount={pdf.pageCount} onChange={setPage} /> : null}
-      </div>
+      {pdf ? (
+        <div className="source-viewer-bar">
+          <PdfPageNav page={page} pageCount={pdf.pageCount} onChange={setPage} />
+        </div>
+      ) : null}
       {pdf ? <PdfPageView pdf={pdf} page={page} /> : <p className="muted">Opening the PDF…</p>}
     </div>
   );
