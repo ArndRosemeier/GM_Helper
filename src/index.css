@@ -1104,15 +1104,19 @@ body.is-card-dragging .encounter-roster {
 
 .token.is-stamp {
   opacity: 0.8;
-  z-index: 0;
-}
-
-.token:not(.is-stamp) {
   z-index: 1;
 }
 
-.token.is-selected {
+.token.is-stamp.is-selected {
   z-index: 2;
+}
+
+.token:not(.is-stamp) {
+  z-index: 3;
+}
+
+.token:not(.is-stamp).is-selected {
+  z-index: 4;
 }
 
 .token.is-selected .token-art,
@@ -1145,7 +1149,7 @@ body.is-card-dragging .encounter-roster {
 
 .token-float-controls {
   position: absolute;
-  z-index: 3;
+  z-index: 5;
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;

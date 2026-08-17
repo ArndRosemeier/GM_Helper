@@ -178,8 +178,20 @@ export type Battleground = {
 export const GRID_SIZE_MIN = 16;
 export const GRID_SIZE_MAX = 128;
 export const GRID_SIZE_DEFAULT = 48;
-/** Default token diameter in CSS pixels (~10% under grid default). */
-export const TOKEN_SIZE_DEFAULT = 44;
+/**
+ * Outer box-shadow ring on `.token-art` / `.token-shape` (each side).
+ * Token CSS width + 2× this should equal the grid cell so lines sit just outside.
+ */
+export const TOKEN_RING_OUTSET_PX = 4;
+
+/** Token CSS width that fills a grid cell with the ring just inside the lines. */
+export function tokenSizeFittingGrid(gridSize: number): number {
+  const inner = gridSize - TOKEN_RING_OUTSET_PX * 2;
+  const clamped = Math.min(GRID_SIZE_MAX, Math.max(GRID_SIZE_MIN, inner));
+  return clamped % 2 === 0 ? clamped : clamped - 1;
+}
+
+export const TOKEN_SIZE_DEFAULT = tokenSizeFittingGrid(GRID_SIZE_DEFAULT);
 
 export function emptyBattleground(): Battleground {
   return {

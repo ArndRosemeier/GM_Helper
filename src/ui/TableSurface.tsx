@@ -107,20 +107,30 @@ export function TableSurface() {
           {gridSize !== null ? (
             <div className="grid" style={{ backgroundSize: `${String(gridSize)}px ${String(gridSize)}px` }} />
           ) : null}
-          {[...tokens]
-            .sort((a, b) => Number(isStampToken(b)) - Number(isStampToken(a)))
-            .map((token) => (
-              <BoardToken
-                key={token.id}
-                token={token}
-                unitSize={unitSize}
-                selected={token.id === selectedTokenId}
-                artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
-                onPointerDown={onTokenPointerDown}
-                onPointerMove={onTokenPointerMove}
-                onPointerUp={onTokenPointerUp}
-              />
-            ))}
+          {tokens.filter(isStampToken).map((token) => (
+            <BoardToken
+              key={token.id}
+              token={token}
+              unitSize={unitSize}
+              selected={token.id === selectedTokenId}
+              artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
+              onPointerDown={onTokenPointerDown}
+              onPointerMove={onTokenPointerMove}
+              onPointerUp={onTokenPointerUp}
+            />
+          ))}
+          {tokens.filter((token) => !isStampToken(token)).map((token) => (
+            <BoardToken
+              key={token.id}
+              token={token}
+              unitSize={unitSize}
+              selected={token.id === selectedTokenId}
+              artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
+              onPointerDown={onTokenPointerDown}
+              onPointerMove={onTokenPointerMove}
+              onPointerUp={onTokenPointerUp}
+            />
+          ))}
           {selected ? (
             <TokenFloatControls
               token={selected}

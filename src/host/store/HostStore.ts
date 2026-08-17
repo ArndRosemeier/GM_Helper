@@ -22,10 +22,12 @@ import {
 import {
   nowIso,
   type AppMode,
+  GRID_SIZE_DEFAULT,
   GRID_SIZE_MAX,
   GRID_SIZE_MIN,
   nextTokenScale,
   TOKEN_STAMP_COLORS,
+  tokenSizeFittingGrid,
   DEFAULT_CARD_CATEGORIES,
   type BattlegroundToken,
   type BusyStatus,
@@ -1228,11 +1230,16 @@ export class HostStore {
           token.entityId !== null &&
           !fighterEntityIds.has(token.entityId)),
     );
+    const gridSize = encounter.gridSize ?? GRID_SIZE_DEFAULT;
+    const tokenSize = encounter.live
+      ? encounter.tokenSize
+      : tokenSizeFittingGrid(gridSize);
     await this.putEncounter({
       ...encounter,
       participants: fighters,
       mapMediaId,
       live: true,
+      tokenSize,
       tokens: [...this.tokensFromRoster(fighters, true), ...kept],
     });
     this.setSurface("table");
@@ -1243,10 +1250,12 @@ export class HostStore {
     if (encounter.participants.length === 0) {
       this.setErrorAndThrow("Encounter has no one in it");
     }
+    const gridSize = encounter.gridSize ?? GRID_SIZE_DEFAULT;
     await this.putEncounter({
       ...encounter,
       activeIndex: 0,
       live: true,
+      tokenSize: tokenSizeFittingGrid(gridSize),
       tokens: this.tokensFromRoster(encounter.participants, false),
     });
     this.emit();
