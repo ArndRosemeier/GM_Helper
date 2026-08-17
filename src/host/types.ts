@@ -28,7 +28,7 @@ export type BusyStatus = {
   detail: string;
 };
 export type Surface = "gm" | "table";
-export type { AppSettings, SurfaceLock } from "./settings";
+export type { AppSettings } from "./settings";
 export type SourceKind = "pdf" | "markdown" | "html" | "image" | "manual";
 export type MediaRole = "portrait" | "token" | "map" | "other";
 

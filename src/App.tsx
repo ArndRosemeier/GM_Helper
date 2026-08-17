@@ -1,5 +1,4 @@
 import { HostProvider, useHost } from "./host/HostContext";
-import { usePosture } from "./ui/usePosture";
 import { HomeShell } from "./ui/HomeShell";
 import { PrepView } from "./ui/PrepView";
 import { SettingsView } from "./ui/SettingsView";
@@ -10,7 +9,6 @@ import "./features/registerAll";
 
 function Surfaces() {
   const { store, snap } = useHost();
-  usePosture(store);
 
   if (!snap.ready) {
     return (

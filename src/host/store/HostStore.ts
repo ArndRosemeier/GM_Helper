@@ -33,7 +33,6 @@ import {
   type BattlegroundToken,
   type BusyStatus,
   type Campaign,
-  type CampaignExport,
   type EncounterParticipant,
   type EncounterState,
   type Entity,
@@ -50,7 +49,7 @@ import {
   type Surface,
   type UrlView,
 } from "../types";
-import { migrateImportedCampaign, migrateOpenDatabase, migrationBanner, SCHEMA_VERSION } from "../persist";
+import { migrateOpenDatabase, migrationBanner, SCHEMA_VERSION } from "../persist";
 import { migrateArchivePayload, migrateCardArchivePayload, parseAnyArchiveManifest, parseArchiveManifest } from "../persist/archiveMigrate";
 import { emptyEncounter, foldScenesIntoEncounters } from "../persist/foldScenes";
 import { SCHEMA_META_KEY } from "../persist/schema";
@@ -76,7 +75,6 @@ import {
   parseAppSettings,
   type AppSettings,
   type SettingsPatch,
-  type SurfaceLock,
 } from "../settings";
 import {
   blobToUint8Array,
@@ -119,7 +117,7 @@ import {
   type OpenRouterConfig,
 } from "../../lib/openrouter";
 import { errorMessage, isDeadPdfTextLayer, isRenderCancelled } from "../errors";
-import { backupSlotId, newestBackup, type CampaignBackup } from "./backup";
+import { newestBackup, type CampaignBackup } from "./backup";
 import { openGmDb, type GmDb } from "./db";
 import { parseTableCardIds, tableCardsMetaKey } from "./tableCards";
 
@@ -146,7 +144,6 @@ export type HostSnapshot = {
   mediaViewEntityId: EntityId | null;
   urlView: UrlView | null;
   busy: BusyStatus | null;
-  lastBackupAt: IsoDateTime | null;
   /** Category names selected in the card filter bar. */
   categoryFilters: ReadonlyArray<string>;
   /** Category applied to newly created cards. */
@@ -194,8 +191,6 @@ export class HostStore {
   private snapshot: HostSnapshot = this.createSnapshot();
   private booting: Promise<void> | null = null;
   private dataDirty = false;
-  private backupTimer: number | null = null;
-  private lastBackupAt: IsoDateTime | null = null;
   private categoryFilters: string[] = [];
   private addCategory = "";
 
@@ -252,7 +247,6 @@ export class HostStore {
     }
     await this.loadCampaign(startId);
     this.ready = true;
-    await this.persistCampaignBackup();
     this.emit();
   }
 
@@ -286,51 +280,6 @@ export class HostStore {
   private setBusy(status: BusyStatus | null): void {
     this.busy = status;
     this.emit();
-  }
-
-  applyPosture(posture: "flat" | "tilted"): void {
-    if (
-      posture === "flat" &&
-      this.settings.startEncounterOnFlat &&
-      this.encounter !== null &&
-      this.encounter.participants.length > 0
-    ) {
-      this.run(this.beginEncounter());
-      return;
-    }
-    switch (this.settings.surfaceLock) {
-      case "hold-gm":
-        this.setSurface("gm");
-        return;
-      case "hold-table":
-        this.setSurface("table");
-        return;
-      case "auto":
-        this.setSurface(posture === "flat" ? "table" : "gm");
-        return;
-      default: {
-        const exhausted: never = this.settings.surfaceLock;
-        this.setErrorAndThrow(`Unknown surface lock: ${String(exhausted)}`);
-      }
-    }
-  }
-
-  setSurfaceLock(lock: SurfaceLock): void {
-    this.run(this.applySettingsPatch({ field: "surfaceLock", value: lock }));
-    switch (lock) {
-      case "hold-gm":
-        this.setSurface("gm");
-        return;
-      case "hold-table":
-        this.setSurface("table");
-        return;
-      case "auto":
-        return;
-      default: {
-        const exhausted: never = lock;
-        this.setErrorAndThrow(`Unknown surface lock: ${String(exhausted)}`);
-      }
-    }
   }
 
   setSurface(surface: Surface): void {
@@ -1396,36 +1345,6 @@ export class HostStore {
     this.emit();
   }
 
-  async addCondition(participantId: ParticipantId, tag: string): Promise<void> {
-    const existing = this.requireEncounter();
-    const trimmed = tag.trim();
-    if (trimmed.length === 0) {
-      this.setErrorAndThrow("Condition tag is empty");
-    }
-    await this.putEncounter({
-      ...existing,
-      participants: existing.participants.map((participant) =>
-        participant.id === participantId && !participant.conditions.includes(trimmed)
-          ? { ...participant, conditions: [...participant.conditions, trimmed] }
-          : participant,
-      ),
-    });
-    this.emit();
-  }
-
-  async removeCondition(participantId: ParticipantId, tag: string): Promise<void> {
-    const existing = this.requireEncounter();
-    await this.putEncounter({
-      ...existing,
-      participants: existing.participants.map((participant) =>
-        participant.id === participantId
-          ? { ...participant, conditions: participant.conditions.filter((item) => item !== tag) }
-          : participant,
-      ),
-    });
-    this.emit();
-  }
-
   async endEncounter(): Promise<void> {
     const sessionId = this.requireSessionId();
     await this.requireDb().delete("encounters", sessionId);
@@ -1441,59 +1360,6 @@ export class HostStore {
   async replaceSettings(next: AppSettings): Promise<void> {
     this.settings = parseAppSettings(next);
     await this.requireDb().put("settings", this.settings, "app");
-    this.emit();
-  }
-
-  exportCampaign(): string {
-    const payload: CampaignExport = {
-      version: SCHEMA_VERSION,
-      campaign: this.requireCampaign(),
-      entities: this.entities,
-      sessions: this.sessions,
-      scenes: [],
-      sources: this.sources.map((source) => ({ ...source, bytes: null })),
-      chunks: this.chunks,
-      logEntries: this.logEntries,
-      encounter: this.encounter,
-    };
-    return JSON.stringify(payload, null, 2);
-  }
-
-  async importCampaign(json: string): Promise<void> {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(json);
-    } catch (error: unknown) {
-      this.setErrorAndThrow(errorMessage(error));
-    }
-    const migrated = migrateImportedCampaign(parsed);
-    if (migrated.warnings.length > 0) {
-      this.error = formatMigrationWarnings(migrated.warnings);
-    }
-    const payload = migrated.payload;
-    const db = this.requireDb();
-    await db.put("campaigns", payload.campaign);
-    for (const entity of payload.entities) {
-      await db.put("entities", entity);
-    }
-    for (const session of payload.sessions) {
-      await db.put("sessions", session);
-    }
-    for (const source of payload.sources) {
-      await db.put("sources", source);
-    }
-    for (const chunk of payload.chunks) {
-      await db.put("chunks", chunk);
-    }
-    for (const entry of payload.logEntries) {
-      await db.put("logEntries", entry);
-    }
-    for (const encounter of migrated.encounters) {
-      await db.put("encounters", encounter);
-    }
-    this.campaigns = await db.getAll("campaigns");
-    this.markDirty();
-    await this.loadCampaign(payload.campaign.id);
     this.emit();
   }
 
@@ -2496,53 +2362,6 @@ export class HostStore {
     this.dataDirty = true;
   }
 
-  private scheduleBackup(): void {
-    if (this.backupTimer !== null) {
-      window.clearTimeout(this.backupTimer);
-    }
-    this.backupTimer = window.setTimeout(() => {
-      this.backupTimer = null;
-      this.run(this.persistCampaignBackup());
-    }, 1500);
-  }
-
-  private async persistCampaignBackup(): Promise<void> {
-    const campaignId = this.currentCampaignId;
-    if (campaignId === null || !this.ready) {
-      return;
-    }
-    const campaign = this.campaigns.find((item) => item.id === campaignId);
-    if (!campaign) {
-      this.setErrorAndThrow("Cannot back up: the open campaign is missing from the index");
-    }
-    const db = this.requireDb();
-    const latestId = backupSlotId(campaignId, "latest");
-    const prevId = backupSlotId(campaignId, "prev");
-    const existing = await db.get("backups", latestId);
-    if (existing) {
-      await db.put("backups", { ...existing, id: prevId });
-    }
-    const backup: CampaignBackup = {
-      id: latestId,
-      schemaVersion: SCHEMA_VERSION,
-      campaignId,
-      savedAt: nowIso(),
-      campaign,
-      entities: this.entities,
-      sessions: this.sessions,
-      scenes: [],
-      sources: this.sources,
-      chunks: this.chunks,
-      media: this.media,
-      logEntries: this.logEntries,
-      encounter: this.encounter,
-      tableCardIds: this.tableCardIds,
-    };
-    await db.put("backups", backup);
-    this.dataDirty = false;
-    this.lastBackupAt = backup.savedAt;
-  }
-
   private createSnapshot(): HostSnapshot {
     const campaign = this.campaigns.find((item) => item.id === this.currentCampaignId) ?? null;
     const session = this.sessions.find((item) => item.id === this.currentSessionId) ?? null;
@@ -2594,7 +2413,6 @@ export class HostStore {
       mediaViewEntityId: this.mediaViewEntityId,
       urlView: this.urlView,
       busy: this.busy,
-      lastBackupAt: this.lastBackupAt,
       categoryFilters: this.categoryFilters,
       addCategory: this.addCategory,
     };
@@ -2604,9 +2422,6 @@ export class HostStore {
     this.snapshot = this.createSnapshot();
     for (const listener of this.listeners) {
       listener();
-    }
-    if (this.ready && this.dataDirty) {
-      this.scheduleBackup();
     }
   }
 }

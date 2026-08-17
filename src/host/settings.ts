@@ -1,6 +1,3 @@
-export const SURFACE_LOCKS = ["auto", "hold-gm", "hold-table"] as const;
-export type SurfaceLock = (typeof SURFACE_LOCKS)[number];
-
 export type OpenRouterApiKey = string & { readonly __brand: "OpenRouterApiKey" };
 export type OpenRouterModelId = string & { readonly __brand: "OpenRouterModelId" };
 
@@ -8,8 +5,6 @@ export type AppSettings = {
   openRouterApiKey: OpenRouterApiKey | null;
   openRouterModelChat: OpenRouterModelId;
   openRouterModelImage: OpenRouterModelId;
-  surfaceLock: SurfaceLock;
-  startEncounterOnFlat: boolean;
   allowCampaignContext: boolean;
 };
 
@@ -41,10 +36,6 @@ export function parseOpenRouterModelId(value: string): OpenRouterModelId {
     throw new Error(`OpenRouter model id contains whitespace: ${trimmed}`);
   }
   return trimmed as OpenRouterModelId;
-}
-
-export function isSurfaceLock(value: unknown): value is SurfaceLock {
-  return SURFACE_LOCKS.some((lock) => lock === value);
 }
 
 function requireStringField(record: Record<string, unknown>, field: string): string {
@@ -82,8 +73,6 @@ export function parseAppSettings(value: unknown): AppSettings {
     openRouterApiKey: parseStoredApiKey(record.openRouterApiKey),
     openRouterModelChat: parseStoredModelId(record, "openRouterModelChat", FALLBACK_CHAT_MODEL),
     openRouterModelImage: parseStoredModelId(record, "openRouterModelImage", FALLBACK_IMAGE_MODEL),
-    surfaceLock: parseStoredSurfaceLock(record.surfaceLock),
-    startEncounterOnFlat: optionalBooleanField(record, "startEncounterOnFlat", false),
     allowCampaignContext: optionalBooleanField(record, "allowCampaignContext", false),
   };
 }
@@ -109,16 +98,6 @@ function parseStoredModelId(
   return parseOpenRouterModelId(requireStringField(record, field));
 }
 
-function parseStoredSurfaceLock(value: unknown): SurfaceLock {
-  if (value === undefined) {
-    return "auto";
-  }
-  if (!isSurfaceLock(value)) {
-    throw new Error(`Settings.surfaceLock is not a known lock: ${String(value)}`);
-  }
-  return value;
-}
-
 export function applySettingsPatch(current: AppSettings, patch: SettingsPatch): AppSettings {
   return parseAppSettings({ ...current, [patch.field]: patch.value });
 }
@@ -127,13 +106,5 @@ export const DEFAULT_SETTINGS: AppSettings = parseAppSettings({
   openRouterApiKey: null,
   openRouterModelChat: "openai/gpt-4.1-mini",
   openRouterModelImage: "google/gemini-2.5-flash-image-preview",
-  surfaceLock: "auto",
-  startEncounterOnFlat: false,
   allowCampaignContext: false,
 });
-
-export const SURFACE_LOCK_LABEL: Record<SurfaceLock, string> = {
-  auto: "Auto",
-  "hold-gm": "Hold GM",
-  "hold-table": "Hold table",
-};

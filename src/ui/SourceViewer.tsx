@@ -144,9 +144,6 @@ export function SourceViewer() {
         </div>
       </header>
       {!source ? <p className="muted">That source is gone.</p> : null}
-      {source && source.bytes === null ? (
-        <p className="muted">This source was ingested before files were kept. Feed the file again.</p>
-      ) : null}
       {source?.kind === "pdf" && pdf ? (
         <PdfPageView
           pdf={pdf}

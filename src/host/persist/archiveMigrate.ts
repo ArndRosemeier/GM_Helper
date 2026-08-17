@@ -113,7 +113,7 @@ export function migrateCardArchivePayload(
       kind: meta.kind,
       createdAt: meta.createdAt,
       mimeType: meta.mimeType,
-      bytes: bytes ? uint8ArrayToBlob(bytes, meta.mimeType) : null,
+      bytes: bytes ? uint8ArrayToBlob(bytes, meta.mimeType ?? "application/octet-stream") : null,
     });
   }
   const mediaMetas = readArchiveMedia(record.media, warnings);

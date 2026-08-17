@@ -44,7 +44,7 @@ export function CardPdfReader({
     return <p className="muted">That PDF is gone.</p>;
   }
   if (source.bytes === null) {
-    return <p className="muted">This PDF was ingested before files were kept. Feed the file again.</p>;
+    return null;
   }
 
   return (

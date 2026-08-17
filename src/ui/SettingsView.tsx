@@ -4,14 +4,8 @@ import {
   parseAppSettings,
   parseOpenRouterApiKeyInput,
   parseOpenRouterModelId,
-  SURFACE_LOCK_LABEL,
-  SURFACE_LOCKS,
   type OpenRouterModelId,
 } from "../host/settings";
-import {
-  requestOrientationPermission,
-  type OrientationPermission,
-} from "../lib/posture";
 import {
   listOpenRouterModels,
   modelOptionLabel,
@@ -20,16 +14,6 @@ import {
   type OpenRouterModelCatalog,
 } from "../lib/openrouter";
 import { featureRegistry } from "../host/features/singleton";
-
-type OrientationUiState = "idle" | OrientationPermission;
-
-const ORIENTATION_LABEL: Record<OrientationUiState, string> = {
-  idle: "not requested",
-  granted: "granted",
-  denied: "denied",
-  unsupported: "unsupported",
-  prompt: "prompt",
-};
 
 type OpenRouterDraft = {
   apiKey: string;
@@ -100,7 +84,6 @@ export function SettingsView() {
       snap.settings.openRouterModelImage,
     ),
   );
-  const [orient, setOrient] = useState<OrientationUiState>("idle");
   const [catalog, setCatalog] = useState<OpenRouterModelCatalog | null>(null);
 
   useEffect(() => {
@@ -198,45 +181,6 @@ export function SettingsView() {
             </li>
           ))}
         </ul>
-      </section>
-      <section>
-        <h2>Table surface</h2>
-        <p className="muted">Flat on the table shows the battleground. Pick up to return. Lock beats the sensor.</p>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={snap.settings.startEncounterOnFlat}
-            onChange={(event) =>
-              store.run(
-                store.applySettingsPatch({
-                  field: "startEncounterOnFlat",
-                  value: event.target.checked,
-                }),
-              )
-            }
-          />
-          Show the defined encounter when the tablet is laid flat
-        </label>
-        <div className="card-actions">
-          {SURFACE_LOCKS.map((lock) => (
-            <button
-              key={lock}
-              type="button"
-              className={snap.settings.surfaceLock === lock ? "active" : ""}
-              onClick={() => store.setSurfaceLock(lock)}
-            >
-              {SURFACE_LOCK_LABEL[lock]}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            store.run(requestOrientationPermission().then((result) => setOrient(result)));
-          }}
-        >
-          Allow orientation ({ORIENTATION_LABEL[orient]})
-        </button>
       </section>
       <section>
         <h2>Campaigns</h2>
