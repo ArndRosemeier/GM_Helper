@@ -450,10 +450,7 @@ export function parseLiftedCard(raw: string): LiftedCard {
 
 export type GeneratedNpc = {
   title: string;
-  look: string;
-  want: string;
-  secret: string;
-  firstLine: string;
+  text: string;
 };
 
 export function parseGeneratedNpc(raw: string): GeneratedNpc {
@@ -463,18 +460,9 @@ export function parseGeneratedNpc(raw: string): GeneratedNpc {
   }
   const record = parsed as Record<string, unknown>;
   const title = record.title;
-  const look = record.look;
-  const want = record.want;
-  const secret = record.secret;
-  const firstLine = record.firstLine;
-  if (
-    typeof title !== "string" ||
-    typeof look !== "string" ||
-    typeof want !== "string" ||
-    typeof secret !== "string" ||
-    typeof firstLine !== "string"
-  ) {
+  const text = record.text;
+  if (typeof title !== "string" || typeof text !== "string") {
     throw new Error("NPC generation missing required fields");
   }
-  return { title, look, want, secret, firstLine };
+  return { title, text };
 }

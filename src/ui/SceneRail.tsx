@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useHost } from "../host/HostContext";
 import { asSessionId } from "../host/ids";
+import { DEFAULT_CAMPAIGN_GENRE } from "../host/types";
 import { saveBlobAsFile } from "../lib/saveBlob";
 import { AddUrlEntity } from "./AddUrlEntity";
 import { SomeoneHere } from "./SomeoneHere";
@@ -8,6 +9,11 @@ import { SomeoneHere } from "./SomeoneHere";
 export function SceneRail() {
   const { store, snap } = useHost();
   const [sessionTitle, setSessionTitle] = useState("");
+  const [sessionGenre, setSessionGenre] = useState(snap.session?.genre ?? DEFAULT_CAMPAIGN_GENRE);
+
+  useEffect(() => {
+    setSessionGenre(snap.session?.genre ?? DEFAULT_CAMPAIGN_GENRE);
+  }, [snap.session?.id, snap.session?.genre]);
 
   const saveAll = (): void => {
     // UI "Campaign" is the selected session; Campaign.name is the legacy workspace label.
@@ -26,25 +32,11 @@ export function SceneRail() {
 
   const loadAll = (file: File): void => {
     store.run(
-      (async () => {
-        const kind = await store.peekArchiveKind(file).catch((error: unknown) => {
-          const detail = error instanceof Error ? error.message : String(error);
-          throw new Error(
-            `That file is not a GM Helper archive (.zip). ${detail}`,
-          );
-        });
-        if (kind === "card") {
-          await store.importCardArchive(file);
-          return;
-        }
-        const ok = window.confirm(
+      store.importPickedArchive(file, () =>
+        window.confirm(
           "Load all replaces every campaign, doc, and image in this browser with the archive. Your OpenRouter API key is kept. Continue?",
-        );
-        if (!ok) {
-          return;
-        }
-        await store.importAllArchive(file);
-      })(),
+        ),
+      ),
     );
   };
 
@@ -65,7 +57,7 @@ export function SceneRail() {
           <input
             type="file"
             // iOS/WebKit often shows .zip files but refuses selection when accept is
-            // extension+MIME limited. Validate after pick via peekArchiveKind instead.
+            // extension+MIME limited. Validate after pick via importPickedArchive instead.
             accept="application/zip,application/x-zip-compressed,application/octet-stream,.zip"
             disabled={snap.busy !== null}
             onChange={(event) => {
@@ -110,16 +102,29 @@ export function SceneRail() {
             store.setError("Campaign title is empty");
             return;
           }
-          store.run(store.createSession(next));
+          store.run(store.createSession(next, sessionGenre));
           setSessionTitle("");
         }}
       >
-        <input
-          value={sessionTitle}
-          onChange={(event) => setSessionTitle(event.target.value)}
-          placeholder="New campaign"
-          aria-label="New campaign title"
-        />
+        <div className="session-fields">
+          <input
+            value={sessionTitle}
+            onChange={(event) => setSessionTitle(event.target.value)}
+            placeholder="New campaign"
+            aria-label="New campaign title"
+          />
+          <input
+            value={sessionGenre}
+            onChange={(event) => setSessionGenre(event.target.value)}
+            onBlur={() => {
+              if (snap.session) {
+                store.run(store.setSessionGenre(sessionGenre));
+              }
+            }}
+            placeholder={DEFAULT_CAMPAIGN_GENRE}
+            aria-label="Campaign genre"
+          />
+        </div>
         <div className="inline-form">
           <button type="submit">Add campaign</button>
           <button

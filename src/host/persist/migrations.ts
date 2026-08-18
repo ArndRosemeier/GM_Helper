@@ -117,6 +117,12 @@ export const SCHEMA_MIGRATIONS: ReadonlyArray<SchemaMigration> = [
     reason: "HP splits into max and current; NPC current HP is per encounter instance.",
     apply: migrate12to13,
   },
+  {
+    from: 13,
+    to: 14,
+    reason: "UI campaigns store a genre, defaulting to Fantasy.",
+    apply: migrate13to14,
+  },
 ];
 
 export function assertMigrationChain(
@@ -388,6 +394,17 @@ async function migrate12to13(db: GmDb): Promise<ReadonlyArray<MigrationWarning>>
       continue;
     }
     await db.put("encounters", { ...fillParticipantCurrentHp(next, filled), sessionId: next.sessionId });
+  }
+  return warnings;
+}
+
+async function migrate13to14(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("sessions")) {
+    const next = readSession(raw, warnings);
+    if (next) {
+      await db.put("sessions", next);
+    }
   }
   return warnings;
 }

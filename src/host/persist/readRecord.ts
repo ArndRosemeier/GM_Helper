@@ -22,6 +22,8 @@ import {
   TOKEN_SIZE_MIN,
   TOKEN_SCALE_MIN,
   nowIso,
+  DEFAULT_CAMPAIGN_GENRE,
+  normalizeCampaignGenre,
   type Battleground,
   type BattlegroundToken,
   type Campaign,
@@ -135,6 +137,9 @@ export function readSession(value: unknown, warnings: MigrationWarning[]): Sessi
     id: asSessionId(id),
     campaignId: asCampaignId(campaignId),
     title: readString(record, "title", "sessions", id, warnings) ?? "Session",
+    genre: normalizeCampaignGenre(
+      readString(record, "genre", "sessions", id, warnings) ?? DEFAULT_CAMPAIGN_GENRE,
+    ),
     createdAt: readIso(record, "createdAt", "sessions", id, warnings),
   };
 }

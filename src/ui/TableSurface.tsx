@@ -203,13 +203,16 @@ export function TableSurface() {
         <div
           ref={board}
           className="board"
-          style={{
-            width: boardLayout === null ? undefined : `${String(boardLayout.width)}px`,
-            height: boardLayout === null ? undefined : `${String(boardLayout.height)}px`,
-            left: `${String(boardLeft)}px`,
-            top: `${String(boardTop)}px`,
-            transform: `translate(${String(camera.view.x)}px, ${String(camera.view.y)}px) scale(${String(camera.view.scale)})`,
-          }}
+          style={
+            {
+              width: boardLayout === null ? undefined : `${String(boardLayout.width)}px`,
+              height: boardLayout === null ? undefined : `${String(boardLayout.height)}px`,
+              left: `${String(boardLeft)}px`,
+              top: `${String(boardTop)}px`,
+              transform: `translate(${String(camera.view.x)}px, ${String(camera.view.y)}px) scale(${String(camera.view.scale)})`,
+              "--board-zoom": String(camera.view.scale),
+            } satisfies CSSProperties & { "--board-zoom": string }
+          }
         >
           {mapUrl ? (
             <img

@@ -158,8 +158,17 @@ export type Session = {
   id: SessionId;
   campaignId: CampaignId;
   title: string;
+  /** Free-text genre for this UI campaign. */
+  genre: string;
   createdAt: IsoDateTime;
 };
+
+export const DEFAULT_CAMPAIGN_GENRE = "Fantasy";
+
+export function normalizeCampaignGenre(value: string): string {
+  const next = value.trim();
+  return next.length > 0 ? next : DEFAULT_CAMPAIGN_GENRE;
+}
 
 export type TokenShape = "circle" | "square" | "portrait";
 

@@ -1,4 +1,4 @@
-import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { strFromU8, strToU8, unzip, unzipSync, zipSync } from "fflate";
 import type { AppSettings } from "../host/settings";
 import type {
   Campaign,
@@ -105,13 +105,24 @@ export function packArchiveZip(archive: PackedArchive | PackedCardArchive): Blob
   return new Blob([copy], { type: "application/zip" });
 }
 
-export function unpackArchiveZip(buffer: ArrayBuffer): {
+export function readArchiveManifest(buffer: ArrayBuffer): unknown {
+  const entries = unzipSync(new Uint8Array(buffer), {
+    filter: (file) => file.name === ARCHIVE_MANIFEST_PATH,
+  });
+  const manifestRaw = entries[ARCHIVE_MANIFEST_PATH];
+  if (!manifestRaw) {
+    throw new Error("Archive is missing manifest.json");
+  }
+  return JSON.parse(strFromU8(manifestRaw)) as unknown;
+}
+
+export async function unpackArchiveZip(buffer: ArrayBuffer): Promise<{
   manifest: unknown;
   data: unknown;
   mediaFiles: Map<string, Uint8Array>;
   sourceFiles: Map<string, Uint8Array>;
-} {
-  const entries = unzipSync(new Uint8Array(buffer));
+}> {
+  const entries = await unzipAsync(new Uint8Array(buffer));
   const manifestRaw = entries[ARCHIVE_MANIFEST_PATH];
   const dataRaw = entries[ARCHIVE_DATA_PATH];
   if (!manifestRaw) {
@@ -137,6 +148,18 @@ export function unpackArchiveZip(buffer: ArrayBuffer): {
     mediaFiles,
     sourceFiles,
   };
+}
+
+function unzipAsync(data: Uint8Array): Promise<Record<string, Uint8Array>> {
+  return new Promise((resolve, reject) => {
+    unzip(data, (error, result) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result);
+    });
+  });
 }
 
 export async function blobToUint8Array(blob: Blob): Promise<Uint8Array> {

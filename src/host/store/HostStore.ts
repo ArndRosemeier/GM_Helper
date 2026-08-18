@@ -31,10 +31,12 @@ import {
   TOKEN_STAMP_COLORS,
   tokenSizeFittingGrid,
   DEFAULT_CARD_CATEGORIES,
+  DEFAULT_CAMPAIGN_GENRE,
   ENCOUNTER_CATEGORY,
   ENCOUNTER_TAG,
   NPC_CATEGORY,
   categoryHasCombatStats,
+  normalizeCampaignGenre,
   type BattlegroundToken,
   type BusyStatus,
   type Campaign,
@@ -100,11 +102,13 @@ import {
   blobToUint8Array,
   packArchiveZip,
   unpackArchiveZip,
+  readArchiveManifest,
   ARCHIVE_FORMAT,
   CARD_ARCHIVE_FORMAT,
   type ArchiveData,
   type CardArchiveData,
 } from "../../lib/archive";
+import { yieldToUi } from "../../lib/yieldToUi";
 import { createCatalog, rebuildCatalog, searchCatalog } from "../search/catalog";
 import {
   adjustTrackInCard,
@@ -363,12 +367,13 @@ export class HostStore {
     this.emit();
   }
 
-  async createSession(title: string): Promise<Session> {
+  async createSession(title: string, genre = DEFAULT_CAMPAIGN_GENRE): Promise<Session> {
     const campaignId = this.requireCampaignId();
     const session: Session = {
       id: newSessionId(),
       campaignId,
       title,
+      genre: normalizeCampaignGenre(genre),
       createdAt: nowIso(),
     };
     await this.requireDb().put("sessions", session);
@@ -376,6 +381,19 @@ export class HostStore {
     this.sessions = [...this.sessions, session];
     await this.selectSession(session.id);
     return session;
+  }
+
+  async setSessionGenre(genre: string): Promise<void> {
+    const session = this.requireSession();
+    const next = normalizeCampaignGenre(genre);
+    if (session.genre === next) {
+      return;
+    }
+    const updated = { ...session, genre: next };
+    await this.requireDb().put("sessions", updated);
+    this.markDirty();
+    this.sessions = this.sessions.map((item) => (item.id === updated.id ? updated : item));
+    this.emit();
   }
 
   async deleteSession(id: SessionId): Promise<void> {
@@ -946,31 +964,21 @@ export class HostStore {
     try {
     let card = localNpcCard();
     if (useAi) {
+      const genre = this.sessions.find((item) => item.id === this.currentSessionId)?.genre
+        ?? DEFAULT_CAMPAIGN_GENRE;
       const raw = await completeJson(this.requireOpenRouter(), [
         {
           role: "system",
           content:
-            "Create a brief NPC for a live RPG table. Return JSON: {title, look, want, secret, firstLine}. No stats unless implied by the ask. If the GM gave a hint, follow it.",
+            `Create a side NPC for a live roleplaying session. The campaign genre is ${genre}. Return JSON: {title, text}. title is only the person's name. text is a free-form description in the same language as the GM's hint. If the GM gave a hint, follow it.`,
         },
         {
           role: "user",
-          content:
-            ask.length > 0
-              ? `Someone the party just stopped to talk to. The GM wants: ${ask}.`
-              : "Someone the party just stopped to talk to.",
+          content: ask.length > 0 ? ask : "A side NPC the party might meet.",
         },
       ]);
       const npc = parseGeneratedNpc(raw);
-      card = withSecret(
-        withFacts(
-          withText({ title: npc.title, tags: ["npc"], category: "", blocks: [] }, npc.look),
-          [
-            { label: "Want", value: npc.want },
-            { label: "First line", value: npc.firstLine },
-          ],
-        ),
-        npc.secret,
-      );
+      card = withText({ title: npc.title, tags: [], category: "", blocks: [] }, npc.text);
     }
     const npcCategory = this.requireCampaign().cardCategories.includes(NPC_CATEGORY)
       ? NPC_CATEGORY
@@ -1805,9 +1813,59 @@ export class HostStore {
   }
 
   async peekArchiveKind(blob: Blob): Promise<"full" | "card"> {
-    const unpacked = unpackArchiveZip(await blob.arrayBuffer());
-    const manifest = parseAnyArchiveManifest(unpacked.manifest);
-    return manifest.format === CARD_ARCHIVE_FORMAT ? "card" : "full";
+    this.setBusy({
+      title: "Opening archive",
+      detail: "Reading the ZIP. Large saves can take a while.",
+    });
+    try {
+      await yieldToUi();
+      const manifest = parseAnyArchiveManifest(readArchiveManifest(await blob.arrayBuffer()));
+      return manifest.format === CARD_ARCHIVE_FORMAT ? "card" : "full";
+    } finally {
+      this.setBusy(null);
+    }
+  }
+
+  async importPickedArchive(blob: Blob, confirmReplaceAll: () => boolean): Promise<void> {
+    this.setBusy({
+      title: "Opening archive",
+      detail: "Reading the ZIP. Large saves can take a while.",
+    });
+    try {
+      await yieldToUi();
+      const buffer = await blob.arrayBuffer();
+      this.setBusy({
+        title: "Opening archive",
+        detail: "Checking whether this is a full save or a single card.",
+      });
+      await yieldToUi();
+      const kind =
+        parseAnyArchiveManifest(readArchiveManifest(buffer)).format === CARD_ARCHIVE_FORMAT
+          ? "card"
+          : "full";
+      if (kind === "card") {
+        this.setBusy({
+          title: "Importing card",
+          detail: "Unpacking the card ZIP and adding it to this campaign.",
+        });
+        await yieldToUi();
+        await this.importCardArchiveFromBuffer(buffer);
+        return;
+      }
+      this.setBusy(null);
+      await yieldToUi();
+      if (!confirmReplaceAll()) {
+        return;
+      }
+      this.setBusy({
+        title: "Loading archive",
+        detail: "Unpacking campaigns, docs, and images. This can take a while for a large save.",
+      });
+      await yieldToUi();
+      await this.importAllArchiveFromBuffer(buffer);
+    } finally {
+      this.setBusy(null);
+    }
   }
 
   async importCardArchive(blob: Blob): Promise<void> {
@@ -1816,9 +1874,17 @@ export class HostStore {
       detail: "Reading the card ZIP and adding it to this campaign.",
     });
     try {
-      const campaignId = this.requireCampaignId();
-      const unpacked = unpackArchiveZip(await blob.arrayBuffer());
-      const manifest = parseAnyArchiveManifest(unpacked.manifest);
+      await yieldToUi();
+      await this.importCardArchiveFromBuffer(await blob.arrayBuffer());
+    } finally {
+      this.setBusy(null);
+    }
+  }
+
+  private async importCardArchiveFromBuffer(buffer: ArrayBuffer): Promise<void> {
+    const campaignId = this.requireCampaignId();
+    const unpacked = await unpackArchiveZip(buffer);
+    const manifest = parseAnyArchiveManifest(unpacked.manifest);
       if (manifest.format !== CARD_ARCHIVE_FORMAT) {
         this.setErrorAndThrow("This ZIP is a full archive. Use Load all with confirmation to replace everything.");
       }
@@ -1912,9 +1978,6 @@ export class HostStore {
       await this.persistTableCards();
       this.markDirty();
       this.emit();
-    } finally {
-      this.setBusy(null);
-    }
   }
 
   async importAllArchive(blob: Blob): Promise<void> {
@@ -1923,7 +1986,15 @@ export class HostStore {
       detail: "Reading the ZIP and replacing local campaign data.",
     });
     try {
-      const unpacked = unpackArchiveZip(await blob.arrayBuffer());
+      await yieldToUi();
+      await this.importAllArchiveFromBuffer(await blob.arrayBuffer());
+    } finally {
+      this.setBusy(null);
+    }
+  }
+
+  private async importAllArchiveFromBuffer(buffer: ArrayBuffer): Promise<void> {
+      const unpacked = await unpackArchiveZip(buffer);
       const manifest = parseArchiveManifest(unpacked.manifest);
       const migrated = migrateArchivePayload(
         unpacked.data,
@@ -2028,9 +2099,6 @@ export class HostStore {
         await this.selectSession(asSessionId(migrated.data.currentSessionId));
       }
       this.emit();
-    } finally {
-      this.setBusy(null);
-    }
   }
 
   mediaUrl(id: MediaId): string | null {

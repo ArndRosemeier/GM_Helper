@@ -859,6 +859,17 @@ h3 {
   margin-top: 12px;
 }
 
+.session-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  min-width: 0;
+}
+
+.session-fields input {
+  min-width: 0;
+}
+
 .session-create .inline-form {
   margin-top: 0;
 }
@@ -978,6 +989,22 @@ h3 {
 
 .busy-modal-card h2 {
   margin: 0 0 10px;
+}
+
+.busy-spinner {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 12px;
+  border: 3px solid var(--line);
+  border-top-color: var(--brass);
+  border-radius: 50%;
+  animation: busy-spin 0.8s linear infinite;
+}
+
+@keyframes busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .battlefield-card-modal {
@@ -1303,6 +1330,7 @@ body.is-card-dragging .encounter-roster {
 }
 
 .board {
+  --board-zoom: 1;
   position: absolute;
   left: 0;
   top: 0;
@@ -1310,7 +1338,6 @@ body.is-card-dragging .encounter-roster {
   height: 100%;
   overflow: visible;
   transform-origin: 0 0;
-  will-change: transform;
   user-select: none;
 }
 
@@ -1422,20 +1449,20 @@ body.is-card-dragging .encounter-roster {
 .token.is-selected .token-art,
 .token.is-selected .token-shape {
   box-shadow:
-    0 0 0 2px #f7f3ea,
-    0 0 0 5px #c9a227,
-    0 3px 8px rgba(0, 0, 0, 0.5);
+    0 0 0 var(--token-ring) #f7f3ea,
+    0 0 0 var(--token-ring-select) #c9a227,
+    0 var(--token-ring-shadow-y) var(--token-ring-shadow-blur) rgba(0, 0, 0, 0.5);
 }
 
 .token-shape {
   display: block;
   width: 100%;
   aspect-ratio: 1;
-  border: 2px solid #111;
+  border: var(--token-ring) solid #111;
   box-shadow:
-    0 0 0 2px #f7f3ea,
-    0 0 0 4px #111,
-    0 3px 8px rgba(0, 0, 0, 0.5);
+    0 0 0 var(--token-ring) #f7f3ea,
+    0 0 0 var(--token-ring-outer) #111,
+    0 var(--token-ring-shadow-y) var(--token-ring-shadow-blur) rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
 
@@ -1444,35 +1471,36 @@ body.is-card-dragging .encounter-roster {
 }
 
 .token-shape.is-square {
-  border-radius: 4px;
+  border-radius: var(--token-ring-outer);
 }
 
 .token-float-controls {
   position: absolute;
   z-index: 5;
-  transform: translateY(-50%);
+  transform-origin: 0 0;
+  transform: scale(calc(1 / var(--board-zoom))) translateY(-50%);
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  gap: 6px;
+  gap: calc(6px * var(--board-zoom));
   pointer-events: auto;
   opacity: 0.5;
 }
 
 .token-float-buttons {
   display: grid;
-  grid-template-columns: var(--token-ctrl-size) var(--token-ctrl-size);
-  grid-auto-rows: var(--token-ctrl-size);
-  gap: calc(var(--token-ctrl-size) * 0.09);
+  grid-template-columns: calc(var(--token-ctrl-size) * var(--board-zoom)) calc(var(--token-ctrl-size) * var(--board-zoom));
+  grid-auto-rows: calc(var(--token-ctrl-size) * var(--board-zoom));
+  gap: calc(var(--token-ctrl-size) * var(--board-zoom) * 0.09);
 }
 
 .token-hp-meter {
-  width: calc(var(--token-ctrl-size) * 0.32);
-  min-width: calc(var(--token-ctrl-size) * 0.32);
+  width: calc(var(--token-ctrl-size) * var(--board-zoom) * 0.32);
+  min-width: calc(var(--token-ctrl-size) * var(--board-zoom) * 0.32);
   border-radius: 999px;
-  border: 2px solid #111;
+  border: calc(2px * var(--board-zoom)) solid #111;
   background: #1a1208;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 calc(2px * var(--board-zoom)) calc(6px * var(--board-zoom)) rgba(0, 0, 0, 0.45);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1485,18 +1513,18 @@ body.is-card-dragging .encounter-roster {
 }
 
 .token-float-controls button {
-  width: var(--token-ctrl-size);
-  height: var(--token-ctrl-size);
-  min-width: var(--token-ctrl-size);
-  min-height: var(--token-ctrl-size);
+  width: calc(var(--token-ctrl-size) * var(--board-zoom));
+  height: calc(var(--token-ctrl-size) * var(--board-zoom));
+  min-width: calc(var(--token-ctrl-size) * var(--board-zoom));
+  min-height: calc(var(--token-ctrl-size) * var(--board-zoom));
   padding: 0;
   border-radius: 50%;
-  border: 2px solid #111;
+  border: calc(2px * var(--board-zoom)) solid #111;
   background: #f7f3ea;
   color: #111;
-  font-size: calc(var(--token-ctrl-size) * 0.36);
+  font-size: calc(var(--token-ctrl-size) * var(--board-zoom) * 0.36);
   line-height: 1;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 calc(2px * var(--board-zoom)) calc(6px * var(--board-zoom)) rgba(0, 0, 0, 0.45);
   cursor: pointer;
 }
 
@@ -1610,13 +1638,23 @@ body.is-card-dragging .encounter-roster {
 }
 
 .token {
+  --token-ring: calc(var(--token-art-size) * var(--board-zoom) / 32);
+  --token-ring-outer: calc(var(--token-art-size) * var(--board-zoom) / 16);
+  --token-ring-select: calc(var(--token-art-size) * var(--board-zoom) * 5 / 64);
+  --token-ring-shadow-y: calc(var(--token-art-size) * var(--board-zoom) * 3 / 64);
+  --token-ring-shadow-blur: calc(var(--token-art-size) * var(--board-zoom) / 8);
   position: absolute;
-  width: var(--token-art-size);
-  transform: translate(-50%, calc(var(--token-art-size) * -0.5));
+  width: calc(var(--token-art-size) * var(--board-zoom));
+  transform-origin: 0 0;
+  transform: translate(
+      calc(var(--token-art-size) * -0.5),
+      calc(var(--token-art-size) * -0.5)
+    )
+    scale(calc(1 / var(--board-zoom)));
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: calc(2px * var(--board-zoom));
   padding: 0;
   min-width: 0;
   min-height: 0;
@@ -1632,23 +1670,23 @@ body.is-card-dragging .encounter-roster {
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: 50%;
-  border: 2px solid #111;
+  border: var(--token-ring) solid #111;
   box-shadow:
-    0 0 0 2px #f7f3ea,
-    0 0 0 4px #111,
-    0 3px 8px rgba(0, 0, 0, 0.5);
+    0 0 0 var(--token-ring) #f7f3ea,
+    0 0 0 var(--token-ring-outer) #111,
+    0 var(--token-ring-shadow-y) var(--token-ring-shadow-blur) rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
 
 .token-name {
-  font-size: 9px;
+  font-size: calc(9px * var(--board-zoom));
   line-height: 1.15;
   text-align: center;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-shadow: 0 1px 2px #000;
+  text-shadow: 0 calc(1px * var(--board-zoom)) calc(2px * var(--board-zoom)) #000;
 }
 
 .token-art-mini {
