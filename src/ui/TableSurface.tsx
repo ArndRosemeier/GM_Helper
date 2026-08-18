@@ -74,6 +74,14 @@ export function TableSurface() {
   const boardLeft = boardLayout === null ? 0 : boardLayout.left;
   const boardTop = boardLayout === null ? 0 : boardLayout.top;
   boardOriginRef.current = { x: boardLeft, y: boardTop };
+  const boardStyle: CSSProperties & { "--board-zoom": string } = {
+    width: boardLayout === null ? undefined : `${String(boardLayout.width)}px`,
+    height: boardLayout === null ? undefined : `${String(boardLayout.height)}px`,
+    left: `${String(boardLeft)}px`,
+    top: `${String(boardTop)}px`,
+    transform: `translate(${String(camera.view.x)}px, ${String(camera.view.y)}px) scale(${String(camera.view.scale)})`,
+    "--board-zoom": String(camera.view.scale),
+  };
 
   useLayoutEffect(() => {
     const node = viewport.current;
@@ -203,16 +211,7 @@ export function TableSurface() {
         <div
           ref={board}
           className="board"
-          style={
-            {
-              width: boardLayout === null ? undefined : `${String(boardLayout.width)}px`,
-              height: boardLayout === null ? undefined : `${String(boardLayout.height)}px`,
-              left: `${String(boardLeft)}px`,
-              top: `${String(boardTop)}px`,
-              transform: `translate(${String(camera.view.x)}px, ${String(camera.view.y)}px) scale(${String(camera.view.scale)})`,
-              "--board-zoom": String(camera.view.scale),
-            } satisfies CSSProperties & { "--board-zoom": string }
-          }
+          style={boardStyle}
         >
           {mapUrl ? (
             <img

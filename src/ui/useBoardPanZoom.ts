@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 
 export const BOARD_SCALE_MIN = 0.35;
-export const BOARD_SCALE_MAX = 5;
+export const BOARD_SCALE_MAX = 40;
 
 export type BoardView = {
   x: number;
