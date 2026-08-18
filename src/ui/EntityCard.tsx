@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cardOriginal, cardTypeLabel } from "../host/cardModel";
 import { combatHpForParticipant, isEncounterCard } from "../host/encounter";
@@ -63,7 +63,8 @@ export function EntityCard({
   const [secretOpen, setSecretOpen] = useState(revealSecrets);
   const [titleDraft, setTitleDraft] = useState(entity.runCard.title);
   const [textDraft, setTextDraft] = useState(text);
-  const [editingText, setEditingText] = useState(text.length === 0);
+  const [editingText, setEditingText] = useState(false);
+  const textEditorRef = useRef<HTMLTextAreaElement>(null);
   const [maxHpDraft, setMaxHpDraft] = useState(combat === null ? "" : String(combat.maxHp));
   const [currentHpDraft, setCurrentHpDraft] = useState(
     displayedCurrentHp === null ? "" : String(displayedCurrentHp),
@@ -100,8 +101,15 @@ export function EntityCard({
   }, [text]);
 
   useEffect(() => {
-    setEditingText(text.length === 0);
+    setEditingText(false);
   }, [entity.id]);
+
+  useEffect(() => {
+    if (!editingText) {
+      return;
+    }
+    textEditorRef.current?.focus();
+  }, [editingText]);
 
   useEffect(() => {
     if (!hasCombatStats || combatMaxHp === undefined || combatInitiative === undefined) {
@@ -404,32 +412,42 @@ export function EntityCard({
           ) : null}
           {isTextCard ? (
             <div className="card-text-block">
-              <button
-                type="button"
-                onClick={() => {
-                  if (editingText) {
-                    store.run(store.setEntityText(entity.id, textDraft));
-                    setEditingText(false);
-                    return;
-                  }
-                  setEditingText(true);
-                }}
-              >
-                {editingText ? "Done" : "Edit text"}
-              </button>
               {editingText ? (
                 <textarea
+                  ref={textEditorRef}
                   className="card-text-editor"
                   value={textDraft}
                   onChange={(event) => setTextDraft(event.target.value)}
                   onBlur={() => {
                     store.run(store.setEntityText(entity.id, textDraft));
+                    setEditingText(false);
                   }}
                   aria-label={`Text for ${entity.runCard.title}`}
                   rows={Math.max(4, textDraft.split("\n").length + 1)}
                 />
               ) : (
-                <MarkdownText markdown={text} />
+                <div
+                  className="card-markdown-hit"
+                  tabIndex={0}
+                  role="textbox"
+                  aria-readonly="true"
+                  aria-label={`Text for ${entity.runCard.title}`}
+                  onClick={(event) => {
+                    if (event.target instanceof Element && event.target.closest("a") !== null) {
+                      return;
+                    }
+                    setEditingText(true);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") {
+                      return;
+                    }
+                    event.preventDefault();
+                    setEditingText(true);
+                  }}
+                >
+                  <MarkdownText markdown={text} />
+                </div>
               )}
             </div>
           ) : null}
@@ -491,7 +509,11 @@ export function EntityCard({
           ) : null}
           {original.kind === "url" ? <CardUrlFrame href={original.href} /> : null}
           {original.kind === "pdf" ? (
-            <CardPdfReader sourceId={original.sourceId} bookmarkPage={original.page} />
+            <CardPdfReader
+              sourceId={original.sourceId}
+              bookmarkPage={original.page}
+              topic={entity.runCard.title}
+            />
           ) : null}
         </div>
       ) : null}

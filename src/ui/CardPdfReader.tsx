@@ -15,16 +15,17 @@ type PendingSave =
 export function CardPdfReader({
   sourceId,
   bookmarkPage,
+  topic,
 }: {
   sourceId: SourceId;
   bookmarkPage: number;
+  topic: string;
 }) {
   const { store, snap } = useHost();
   const [pdf, setPdf] = useState<LoadedPdf | null>(null);
   const [page, setPage] = useState(bookmarkPage);
   const [selectedImage, setSelectedImage] = useState<PdfPageImage | null>(null);
   const [pending, setPending] = useState<PendingSave | null>(null);
-  const [topicPending, setTopicPending] = useState(false);
   const source = snap.sources.find((item) => item.id === sourceId) ?? null;
   const bytes = source?.kind === "pdf" ? source.bytes : null;
   const offBookmark = page !== bookmarkPage;
@@ -36,7 +37,6 @@ export function CardPdfReader({
   useEffect(() => {
     setSelectedImage(null);
     setPending(null);
-    setTopicPending(false);
   }, [page]);
 
   useEffect(() => {
@@ -102,8 +102,13 @@ export function CardPdfReader({
     );
   };
 
-  const startAiCard = (topic: string): void => {
-    store.run(runAddCardWithAi(store, source.id, page, topic));
+  const startAiCard = (): void => {
+    const trimmed = topic.trim();
+    if (trimmed.length === 0) {
+      store.setError("This card has no name to use as the AI topic");
+      return;
+    }
+    store.run(runAddCardWithAi(store, source.id, page, trimmed));
   };
 
   return (
@@ -143,7 +148,7 @@ export function CardPdfReader({
             <button
               type="button"
               disabled={snap.busy !== null}
-              onClick={() => setTopicPending(true)}
+              onClick={startAiCard}
             >
               Add card with AI
             </button>
@@ -168,18 +173,6 @@ export function CardPdfReader({
           confirmLabel={pending.kind === "image" ? "Add image card" : "Add card"}
           onCancel={() => setPending(null)}
           onConfirm={confirmSave}
-        />
-      ) : null}
-      {topicPending ? (
-        <NameCardModal
-          title="What should the AI extract?"
-          fieldLabel="Topic"
-          confirmLabel="Add card with AI"
-          onCancel={() => setTopicPending(false)}
-          onConfirm={(topic) => {
-            setTopicPending(false);
-            startAiCard(topic);
-          }}
         />
       ) : null}
     </div>

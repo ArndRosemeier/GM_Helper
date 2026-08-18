@@ -552,13 +552,17 @@ h3 {
 
 .card-text-block {
   display: grid;
-  gap: 10px;
   margin-top: 12px;
-  justify-items: start;
 }
 
 .card-text-block .card-text-editor {
   margin-top: 0;
+}
+
+.card-markdown-hit {
+  width: 100%;
+  min-height: var(--tap);
+  cursor: text;
 }
 
 .card-markdown {

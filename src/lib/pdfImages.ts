@@ -76,6 +76,7 @@ export async function extractPdfPagesImages(
   pageNumbers: ReadonlyArray<number>,
 ): Promise<ReadonlyArray<Blob>> {
   const pngs: Blob[] = [];
+  const seen = new Set<string>();
   for (const pageNumber of pageNumbers) {
     if (pageNumber < 1 || pageNumber > document.numPages) {
       throw new Error(`PDF has no page ${String(pageNumber)}`);
@@ -85,9 +86,15 @@ export async function extractPdfPagesImages(
     const task = await startPdfPageRender(document, pageNumber, canvas, 800);
     await awaitPdfRender(task);
     const page = await document.getPage(pageNumber);
-    const listed = await listPdfPageImages(page, 1, 0);
-    for (const image of listed) {
-      pngs.push(await extractPdfImagePng(page, image.objectName));
+    // Display paint and getOperatorList() are different pdf.js intents. The
+    // operator list names every XObject; only the paint decodes bitmaps into
+    // page.objs / commonObjs. Read those stores, not the oplist names.
+    for (const [objectName, payload] of loadedRasters(page)) {
+      if (seen.has(objectName)) {
+        continue;
+      }
+      seen.add(objectName);
+      pngs.push(await rasterToPng(payload));
     }
   }
   return pngs;
@@ -173,17 +180,63 @@ function apply(m: Matrix, x: number, y: number): readonly [number, number] {
   return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
 }
 
+function loadedRasters(page: PDFPageProxy): Array<[string, unknown]> {
+  const rasters: Array<[string, unknown]> = [];
+  for (const [objectName, payload] of page.objs) {
+    if (typeof objectName === "string" && isPdfRaster(payload)) {
+      rasters.push([objectName, payload]);
+    }
+  }
+  for (const [objectName, payload] of page.commonObjs) {
+    if (typeof objectName === "string" && isPdfRaster(payload)) {
+      rasters.push([objectName, payload]);
+    }
+  }
+  return rasters;
+}
+
+function pdfObjectStore(
+  page: PDFPageProxy,
+  objectName: string,
+): { has: (id: string) => boolean; get: (id: string) => unknown } {
+  return objectName.startsWith("g_") ? page.commonObjs : page.objs;
+}
+
 function readPageObject(page: PDFPageProxy, objectName: string): unknown {
   // pdf.js 6: get(id, callback) inserts an unresolved object and waits forever
   // unless a paint is in flight. Only read objects that are already resolved.
-  if (!page.objs.has(objectName)) {
+  const store = pdfObjectStore(page, objectName);
+  if (!store.has(objectName)) {
     throw new Error(`PDF image “${objectName}” is not loaded`);
   }
-  const image = page.objs.get(objectName);
+  const image = store.get(objectName);
   if (image === null || image === undefined) {
     throw new Error(`PDF image “${objectName}” is missing`);
   }
   return image;
+}
+
+function isPdfRaster(image: unknown): boolean {
+  if (typeof ImageBitmap !== "undefined" && image instanceof ImageBitmap) {
+    return true;
+  }
+  if (typeof image !== "object" || image === null) {
+    return false;
+  }
+  const record = image as Record<string, unknown>;
+  if (typeof ImageBitmap !== "undefined" && record.bitmap instanceof ImageBitmap) {
+    return true;
+  }
+  const width = typeof record.width === "number" ? record.width : null;
+  const height = typeof record.height === "number" ? record.height : null;
+  const data = record.data;
+  return (
+    width !== null &&
+    height !== null &&
+    width > 0 &&
+    height > 0 &&
+    (data instanceof Uint8ClampedArray || data instanceof Uint8Array)
+  );
 }
 
 async function rasterToPng(image: unknown): Promise<Blob> {
