@@ -1844,11 +1844,38 @@ body.is-card-dragging .encounter-roster {
   margin-bottom: 12px;
 }
 
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.doc-scope {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: var(--tap);
+  min-height: var(--tap);
+}
+
+.doc-scope input {
+  width: auto;
+  min-width: var(--tap);
+  min-height: var(--tap);
+}
+
 .doc-button {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.doc-row .doc-button {
+  min-width: 0;
 }
 
 .add-entity {

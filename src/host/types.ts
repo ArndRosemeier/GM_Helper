@@ -344,15 +344,11 @@ export type NowContext = {
   surface: Surface;
 };
 
-export type SearchHitKind = "entity" | "chunk";
-
 export type SearchHit = {
   id: string;
-  kind: SearchHitKind;
   title: string;
   snippet: string;
-  entityId: EntityId | null;
-  chunkId: ChunkId | null;
+  chunkId: ChunkId;
 };
 
 export type CampaignExport = {

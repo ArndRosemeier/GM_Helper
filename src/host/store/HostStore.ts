@@ -109,7 +109,7 @@ import {
   type CardArchiveData,
 } from "../../lib/archive";
 import { yieldToUi } from "../../lib/yieldToUi";
-import { createCatalog, rebuildCatalog, searchCatalog } from "../search/catalog";
+import { createCatalog, rebuildCatalog, searchCatalog, type SearchDoc } from "../search/catalog";
 import {
   adjustTrackInCard,
   cloneTracks,
@@ -190,13 +190,7 @@ type EncounterTarget = { kind: "session" } | { kind: "card"; entityId: EntityId 
 export class HostStore {
   private db: GmDb | null = null;
   private listeners = new Set<() => void>();
-  private catalog: MiniSearch<{
-    id: string;
-    kind: "entity" | "chunk";
-    title: string;
-    text: string;
-    tags: string;
-  }> = createCatalog();
+  private catalog: MiniSearch<SearchDoc> = createCatalog();
   private objectUrls = new Map<string, string>();
 
   private campaigns: Campaign[] = [];
@@ -283,8 +277,8 @@ export class HostStore {
     this.emit();
   }
 
-  search(query: string): ReadonlyArray<SearchHit> {
-    return searchCatalog(this.catalog, query);
+  search(query: string, includedSourceIds: ReadonlySet<SourceId>): ReadonlyArray<SearchHit> {
+    return searchCatalog(this.catalog, query, includedSourceIds);
   }
 
   setMode(mode: AppMode): void {
@@ -2512,7 +2506,7 @@ export class HostStore {
   }
 
   private reindex(): void {
-    rebuildCatalog(this.catalog, this.entities, this.chunks);
+    rebuildCatalog(this.catalog, this.chunks);
   }
 
   private ensureSessionSelection(): void {

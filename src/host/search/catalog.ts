@@ -1,54 +1,13 @@
 import MiniSearch from "minisearch";
-import type { Entity, SearchHit, SourceChunk } from "../types";
-import { asChunkId, asEntityId } from "../ids";
+import type { SearchHit, SourceChunk } from "../types";
+import { asChunkId, asSourceId, type SourceId } from "../ids";
 
-type SearchDoc = {
+export type SearchDoc = {
   id: string;
-  kind: "entity" | "chunk";
   title: string;
   text: string;
-  tags: string;
+  sourceId: string;
 };
-
-function entityText(entity: Entity): string {
-  const parts: string[] = [entity.runCard.title, ...entity.runCard.tags];
-  for (const block of entity.runCard.blocks) {
-    switch (block.kind) {
-      case "text":
-      case "secret":
-        parts.push(block.body);
-        break;
-      case "facts":
-        for (const item of block.items) {
-          parts.push(item.label, item.value);
-        }
-        break;
-      case "tracks":
-        for (const track of block.items) {
-          parts.push(track.label);
-        }
-        break;
-      case "provenance":
-        parts.push(block.excerpt);
-        break;
-      case "media":
-        break;
-      case "encounter":
-        for (const participant of block.participants) {
-          parts.push(participant.label);
-        }
-        break;
-      case "combat":
-        parts.push(String(block.maxHp));
-        if (block.currentHp !== null) {
-          parts.push(String(block.currentHp));
-        }
-        parts.push(String(block.initiativeBonus));
-        break;
-    }
-  }
-  return parts.join(" ");
-}
 
 function snippetOf(text: string, query: string): string {
   const lower = text.toLowerCase();
@@ -61,8 +20,8 @@ function snippetOf(text: string, query: string): string {
 
 export function createCatalog(): MiniSearch<SearchDoc> {
   return new MiniSearch<SearchDoc>({
-    fields: ["title", "text", "tags"],
-    storeFields: ["kind", "title", "text"],
+    fields: ["title", "text"],
+    storeFields: ["title", "text", "sourceId"],
     idField: "id",
     searchOptions: {
       prefix: true,
@@ -73,26 +32,15 @@ export function createCatalog(): MiniSearch<SearchDoc> {
 
 export function rebuildCatalog(
   catalog: MiniSearch<SearchDoc>,
-  entities: ReadonlyArray<Entity>,
   chunks: ReadonlyArray<SourceChunk>,
 ): void {
   catalog.removeAll();
-  const docs: SearchDoc[] = [
-    ...entities.map((entity) => ({
-      id: `entity:${entity.id}`,
-      kind: "entity" as const,
-      title: entity.runCard.title,
-      text: entityText(entity),
-      tags: entity.runCard.tags.join(" "),
-    })),
-    ...chunks.map((chunk) => ({
-      id: `chunk:${chunk.id}`,
-      kind: "chunk" as const,
-      title: chunk.heading,
-      text: chunk.text,
-      tags: "",
-    })),
-  ];
+  const docs: SearchDoc[] = chunks.map((chunk) => ({
+    id: chunk.id,
+    title: chunk.heading,
+    text: chunk.text,
+    sourceId: chunk.sourceId,
+  }));
   if (docs.length > 0) {
     catalog.addAll(docs);
   }
@@ -101,29 +49,29 @@ export function rebuildCatalog(
 export function searchCatalog(
   catalog: MiniSearch<SearchDoc>,
   query: string,
+  includedSourceIds: ReadonlySet<SourceId>,
 ): ReadonlyArray<SearchHit> {
   const trimmed = query.trim();
   if (trimmed.length === 0) {
     return [];
   }
-  return catalog.search(trimmed).slice(0, 24).map((result) => {
-    const kind = result.kind;
-    if (kind !== "entity" && kind !== "chunk") {
-      throw new Error(`Search document missing kind: ${result.id}`);
+  const ranked = catalog.search(trimmed).filter((result) => {
+    if (typeof result.sourceId !== "string" || result.sourceId.length === 0) {
+      throw new Error(`Search chunk missing sourceId: ${result.id}`);
     }
+    return includedSourceIds.has(asSourceId(result.sourceId));
+  });
+  return ranked.slice(0, 24).map((result) => {
     const title = result.title;
     const text = result.text;
     if (typeof title !== "string" || typeof text !== "string") {
       throw new Error(`Search document missing stored fields: ${result.id}`);
     }
-    const rawId = result.id.includes(":") ? result.id.slice(result.id.indexOf(":") + 1) : result.id;
     return {
       id: result.id,
-      kind,
       title,
       snippet: snippetOf(text, trimmed),
-      entityId: kind === "entity" ? asEntityId(rawId) : null,
-      chunkId: kind === "chunk" ? asChunkId(rawId) : null,
+      chunkId: asChunkId(result.id),
     };
   });
 }
