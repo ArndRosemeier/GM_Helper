@@ -1,4 +1,6 @@
-import type { PDFPageProxy } from "pdfjs-dist";
+import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
+import { yieldToUi } from "./yieldToUi";
+import { awaitPdfRender, startPdfPageRender } from "./pdfPage";
 
 export type PdfPageImage = {
   id: string;
@@ -18,6 +20,7 @@ const MIN_CSS_SIDE = 28;
 export async function listPdfPageImages(
   page: PDFPageProxy,
   cssScale: number,
+  minCssSide = MIN_CSS_SIDE,
 ): Promise<ReadonlyArray<PdfPageImage>> {
   const { OPS } = await import("pdfjs-dist");
   const viewport = page.getViewport({ scale: cssScale });
@@ -51,7 +54,7 @@ export async function listPdfPageImages(
       continue;
     }
     const box = imageBox(ctm, viewport);
-    if (box.width < MIN_CSS_SIDE || box.height < MIN_CSS_SIDE) {
+    if (box.width < minCssSide || box.height < minCssSide) {
       continue;
     }
     seen.add(objectName);
@@ -68,11 +71,52 @@ export async function listPdfPageImages(
   return images;
 }
 
+export async function extractPdfPagesImages(
+  document: PDFDocumentProxy,
+  pageNumbers: ReadonlyArray<number>,
+): Promise<ReadonlyArray<Blob>> {
+  const pngs: Blob[] = [];
+  for (const pageNumber of pageNumbers) {
+    if (pageNumber < 1 || pageNumber > document.numPages) {
+      throw new Error(`PDF has no page ${String(pageNumber)}`);
+    }
+    await yieldToUi();
+    const canvas = window.document.createElement("canvas");
+    const task = await startPdfPageRender(document, pageNumber, canvas, 800);
+    await awaitPdfRender(task);
+    const page = await document.getPage(pageNumber);
+    const listed = await listPdfPageImages(page, 1, 0);
+    for (const image of listed) {
+      pngs.push(await extractPdfImagePng(page, image.objectName));
+    }
+  }
+  return pngs;
+}
+
+export async function shrinkPngHalf(blob: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const width = Math.max(1, Math.round(bitmap.width / 2));
+    const height = Math.max(1, Math.round(bitmap.height / 2));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Could not open a 2D canvas to shrink the PDF image");
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    return canvasToPng(canvas);
+  } finally {
+    bitmap.close();
+  }
+}
+
 export async function extractPdfImagePng(page: PDFPageProxy, objectName: string): Promise<Blob> {
-  // Operator lists pull image dependencies into page.objs.
   await page.getOperatorList();
-  const image = await readPageObject(page, objectName);
-  return rasterToPng(image);
+  return rasterToPng(readPageObject(page, objectName));
 }
 
 function imageBox(
@@ -129,20 +173,17 @@ function apply(m: Matrix, x: number, y: number): readonly [number, number] {
   return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
 }
 
-function readPageObject(page: PDFPageProxy, objectName: string): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    try {
-      page.objs.get(objectName, (value: unknown) => {
-        if (value === null || value === undefined) {
-          reject(new Error(`PDF image “${objectName}” is missing`));
-          return;
-        }
-        resolve(value);
-      });
-    } catch (error: unknown) {
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
-  });
+function readPageObject(page: PDFPageProxy, objectName: string): unknown {
+  // pdf.js 6: get(id, callback) inserts an unresolved object and waits forever
+  // unless a paint is in flight. Only read objects that are already resolved.
+  if (!page.objs.has(objectName)) {
+    throw new Error(`PDF image “${objectName}” is not loaded`);
+  }
+  const image = page.objs.get(objectName);
+  if (image === null || image === undefined) {
+    throw new Error(`PDF image “${objectName}” is missing`);
+  }
+  return image;
 }
 
 async function rasterToPng(image: unknown): Promise<Blob> {
@@ -223,10 +264,6 @@ async function drawableToPng(
   if (!ctx) {
     throw new Error("Could not open a 2D canvas for the PDF image");
   }
-  // pdf.js paints XObjects with scale(1, -1). Raw objs bitmaps are therefore
-  // mirrored across the x-axis relative to the page.
-  ctx.translate(0, height);
-  ctx.scale(1, -1);
   ctx.drawImage(source, 0, 0);
   return canvasToPng(canvas);
 }

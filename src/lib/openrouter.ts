@@ -4,9 +4,21 @@ const MODELS_URL = "https://openrouter.ai/api/v1/models";
 
 export type ChatRole = "system" | "user" | "assistant";
 
+export type ChatTextPart = {
+  type: "text";
+  text: string;
+};
+
+export type ChatImageUrlPart = {
+  type: "image_url";
+  image_url: { url: string };
+};
+
+export type ChatContentPart = ChatTextPart | ChatImageUrlPart;
+
 export type ChatMessage = {
   role: ChatRole;
-  content: string;
+  content: string | ReadonlyArray<ChatContentPart>;
 };
 
 export type OpenRouterConfig = {
@@ -297,16 +309,60 @@ function textFromMessage(message: NonNullable<ChatCompletionResponse["choices"]>
 }
 
 export async function completeJson(config: OpenRouterConfig, messages: ReadonlyArray<ChatMessage>): Promise<string> {
+  const hasImages = messages.some((message) => messageHasImage(message));
   const payload = await postChat(config.apiKey, {
     model: config.chatModel,
     messages,
-    response_format: { type: "json_object" },
+    // Many vision endpoints reject response_format when images are present.
+    ...(hasImages ? {} : { response_format: { type: "json_object" } }),
   });
   const choice = payload.choices?.[0];
   if (!choice) {
     throw new Error("OpenRouter returned no choices");
   }
   return textFromMessage(choice.message);
+}
+
+function messageHasImage(message: ChatMessage): boolean {
+  if (typeof message.content === "string") {
+    return false;
+  }
+  return message.content.some((part) => part.type === "image_url");
+}
+
+const visionChatModelCache = new Map<OpenRouterModelId, boolean>();
+
+/**
+ * Whether the configured chat model accepts image inputs on /chat/completions.
+ * Cached for the tab lifetime.
+ */
+export async function chatModelAcceptsImages(config: OpenRouterConfig): Promise<boolean> {
+  const cached = visionChatModelCache.get(config.chatModel);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const accepts = await fetchChatModelAcceptsImages(config);
+  visionChatModelCache.set(config.chatModel, accepts);
+  return accepts;
+}
+
+async function fetchChatModelAcceptsImages(config: OpenRouterConfig): Promise<boolean> {
+  let url: string | null =
+    `${MODELS_URL}?limit=500&input_modalities=image&output_modalities=text`;
+  while (url !== null) {
+    const page = await fetchModelsPage(url, config.apiKey);
+    for (const item of page.data) {
+      if (typeof item !== "object" || item === null) {
+        continue;
+      }
+      const id = (item as Record<string, unknown>).id;
+      if (id === config.chatModel) {
+        return true;
+      }
+    }
+    url = page.next;
+  }
+  return false;
 }
 
 export async function generateImagePng(
@@ -378,7 +434,7 @@ async function postImages(
   return base64ToBlob(first.b64_json, mime);
 }
 
-async function blobToDataUrl(blob: Blob): Promise<string> {
+export async function blobToDataUrl(blob: Blob): Promise<string> {
   const buffer = await blob.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -446,6 +502,60 @@ export function parseLiftedCard(raw: string): LiftedCard {
     return [{ label: track.label, current: track.current, max }];
   });
   return { title: record.title, tags, text, facts, secret, tracks };
+}
+
+export type AiTopicCard = {
+  title: string;
+  text: string;
+  selectedImageIndex: number | null;
+};
+
+export function parseAiTopicCard(raw: string, imageCount: number): AiTopicCard {
+  if (!Number.isInteger(imageCount) || imageCount < 0) {
+    throw new Error(`Image count must be a non-negative integer, got ${String(imageCount)}`);
+  }
+  const parsed: unknown = jsonObjectFromModelText(raw);
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("AI card did not return an object");
+  }
+  const record = parsed as Record<string, unknown>;
+  const title = typeof record.title === "string" ? record.title.trim() : "";
+  const text = typeof record.text === "string" ? record.text.trim() : "";
+  if (title.length === 0) {
+    throw new Error("AI card is missing a title");
+  }
+  if (text.length === 0) {
+    throw new Error("AI card is missing markdown text");
+  }
+  const indexRaw = record.selectedImageIndex;
+  if (indexRaw === null) {
+    return { title, text, selectedImageIndex: null };
+  }
+  if (typeof indexRaw !== "number" || !Number.isInteger(indexRaw)) {
+    throw new Error("AI card selectedImageIndex must be an integer or null");
+  }
+  if (imageCount === 0) {
+    throw new Error("AI card selected an image but none were provided");
+  }
+  if (indexRaw < 0 || indexRaw >= imageCount) {
+    throw new Error(
+      `AI card selected image ${String(indexRaw)} is out of range (0–${String(imageCount - 1)})`,
+    );
+  }
+  return { title, text, selectedImageIndex: indexRaw };
+}
+
+function jsonObjectFromModelText(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start < 0 || end <= start) {
+      throw new Error(`AI card was not JSON: ${raw.slice(0, 240)}`);
+    }
+    return JSON.parse(raw.slice(start, end + 1));
+  }
 }
 
 export type GeneratedNpc = {

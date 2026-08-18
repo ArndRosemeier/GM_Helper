@@ -3,11 +3,13 @@ import { createPortal } from "react-dom";
 
 export function NameCardModal({
   title,
+  fieldLabel,
   confirmLabel,
   onCancel,
   onConfirm,
 }: {
   title: string;
+  fieldLabel: string;
   confirmLabel: string;
   onCancel: () => void;
   onConfirm: (name: string) => void;
@@ -35,13 +37,13 @@ export function NameCardModal({
         <p className="eyebrow">New card</p>
         <h2 id="name-card-title">{title}</h2>
         <label>
-          Name
+          {fieldLabel}
           <input
             ref={inputRef}
             value={name}
             onChange={(event) => setName(event.target.value)}
             autoComplete="off"
-            aria-label="Card name"
+            aria-label={fieldLabel}
           />
         </label>
         <div className="card-actions">

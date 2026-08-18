@@ -550,6 +550,83 @@ h3 {
   min-height: 6rem;
 }
 
+.card-text-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  justify-items: start;
+}
+
+.card-text-block .card-text-editor {
+  margin-top: 0;
+}
+
+.card-markdown {
+  width: 100%;
+  font-size: 1.15rem;
+  line-height: 1.45;
+}
+
+.card-markdown > :first-child {
+  margin-top: 0;
+}
+
+.card-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.card-markdown h1,
+.card-markdown h2,
+.card-markdown h3,
+.card-markdown h4 {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  margin: 0.85em 0 0.35em;
+}
+
+.card-markdown p,
+.card-markdown ul,
+.card-markdown ol,
+.card-markdown blockquote,
+.card-markdown pre {
+  margin: 0 0 0.7em;
+}
+
+.card-markdown ul,
+.card-markdown ol {
+  padding-left: 1.3em;
+}
+
+.card-markdown a {
+  color: var(--brass);
+}
+
+.card-markdown code {
+  font-size: 0.9em;
+  background: #120f0c;
+  padding: 0.1em 0.35em;
+  border-radius: 6px;
+}
+
+.card-markdown pre {
+  overflow-x: auto;
+  padding: 10px 12px;
+  background: #120f0c;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.card-markdown pre code {
+  padding: 0;
+  background: none;
+}
+
+.card-markdown blockquote {
+  padding-left: 12px;
+  border-left: 3px solid var(--line);
+  color: var(--ink-dim);
+}
+
 .combat-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(8rem, 12rem));

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useHost } from "../host/HostContext";
 import { extractPdfImagePng, type PdfPageImage } from "../lib/pdfImages";
 import { loadPdf, type LoadedPdf } from "../lib/pdfPage";
+import { runAddCardWithAi } from "./aiPdfCard";
 import { NameCardModal } from "./NameCardModal";
 import { PdfPageNav } from "./PdfPageNav";
 import { PdfPageView } from "./PdfPageView";
@@ -20,6 +21,7 @@ export function SourceViewer() {
   const [selectedImage, setSelectedImage] = useState<PdfPageImage | null>(null);
   const [viewPage, setViewPage] = useState(view?.page ?? 1);
   const [pending, setPending] = useState<PendingSave | null>(null);
+  const [topicPending, setTopicPending] = useState(false);
 
   const source = view ? (snap.sources.find((item) => item.id === view.sourceId) ?? null) : null;
   const sourceId = source?.id ?? null;
@@ -141,6 +143,23 @@ export function SourceViewer() {
     );
   };
 
+  const startAiCard = (topic: string): void => {
+    if (!source || source.kind !== "pdf") {
+      store.setError("AI card is only available for PDF sources");
+      return;
+    }
+    store.run(runAddCardWithAi(store, source.id, viewPage, topic));
+  };
+
+  const onAddCardWithAi = (): void => {
+    const topic = view?.searchQuery?.trim() ?? "";
+    if (topic.length === 0) {
+      setTopicPending(true);
+      return;
+    }
+    startAiCard(topic);
+  };
+
   return (
     <section className="source-viewer">
       <header className="source-viewer-bar">
@@ -156,6 +175,15 @@ export function SourceViewer() {
           <button type="button" onClick={() => setPending({ kind: "page", picture: selectedImage })}>
             Add card
           </button>
+          {source?.kind === "pdf" ? (
+            <button
+              type="button"
+              disabled={snap.busy !== null}
+              onClick={onAddCardWithAi}
+            >
+              Add card with AI
+            </button>
+          ) : null}
           {source?.kind === "pdf" ? (
             <button
               type="button"
@@ -199,9 +227,22 @@ export function SourceViewer() {
       {pending !== null ? (
         <NameCardModal
           title={pending.kind === "image" ? "Name this image card" : "Name this card"}
+          fieldLabel="Name"
           confirmLabel={pending.kind === "image" ? "Add image card" : "Add card"}
           onCancel={() => setPending(null)}
           onConfirm={confirmSave}
+        />
+      ) : null}
+      {topicPending ? (
+        <NameCardModal
+          title="What should the AI extract?"
+          fieldLabel="Topic"
+          confirmLabel="Add card with AI"
+          onCancel={() => setTopicPending(false)}
+          onConfirm={(topic) => {
+            setTopicPending(false);
+            startAiCard(topic);
+          }}
         />
       ) : null}
     </section>

@@ -21,6 +21,7 @@ import { isIntegerDraft, parseIntegerField } from "../lib/integerField";
 import { saveBlobAsFile } from "../lib/saveBlob";
 import { CardPdfReader } from "./CardPdfReader";
 import { CardUrlFrame } from "./CardUrlFrame";
+import { MarkdownText } from "./MarkdownText";
 import { TokenGrabModal } from "./TokenGrabModal";
 import { cardImageUrl } from "../lib/defaultToken";
 
@@ -62,6 +63,7 @@ export function EntityCard({
   const [secretOpen, setSecretOpen] = useState(revealSecrets);
   const [titleDraft, setTitleDraft] = useState(entity.runCard.title);
   const [textDraft, setTextDraft] = useState(text);
+  const [editingText, setEditingText] = useState(text.length === 0);
   const [maxHpDraft, setMaxHpDraft] = useState(combat === null ? "" : String(combat.maxHp));
   const [currentHpDraft, setCurrentHpDraft] = useState(
     displayedCurrentHp === null ? "" : String(displayedCurrentHp),
@@ -96,6 +98,10 @@ export function EntityCard({
   useEffect(() => {
     setTextDraft(text);
   }, [text]);
+
+  useEffect(() => {
+    setEditingText(text.length === 0);
+  }, [entity.id]);
 
   useEffect(() => {
     if (!hasCombatStats || combatMaxHp === undefined || combatInitiative === undefined) {
@@ -397,16 +403,35 @@ export function EntityCard({
             </div>
           ) : null}
           {isTextCard ? (
-            <textarea
-              className="card-text-editor"
-              value={textDraft}
-              onChange={(event) => setTextDraft(event.target.value)}
-              onBlur={() => {
-                store.run(store.setEntityText(entity.id, textDraft));
-              }}
-              aria-label={`Text for ${entity.runCard.title}`}
-              rows={Math.max(4, textDraft.split("\n").length + 1)}
-            />
+            <div className="card-text-block">
+              <button
+                type="button"
+                onClick={() => {
+                  if (editingText) {
+                    store.run(store.setEntityText(entity.id, textDraft));
+                    setEditingText(false);
+                    return;
+                  }
+                  setEditingText(true);
+                }}
+              >
+                {editingText ? "Done" : "Edit text"}
+              </button>
+              {editingText ? (
+                <textarea
+                  className="card-text-editor"
+                  value={textDraft}
+                  onChange={(event) => setTextDraft(event.target.value)}
+                  onBlur={() => {
+                    store.run(store.setEntityText(entity.id, textDraft));
+                  }}
+                  aria-label={`Text for ${entity.runCard.title}`}
+                  rows={Math.max(4, textDraft.split("\n").length + 1)}
+                />
+              ) : (
+                <MarkdownText markdown={text} />
+              )}
+            </div>
           ) : null}
           {facts.length > 0 ? (
             <dl className="facts">
@@ -458,7 +483,7 @@ export function EntityCard({
             <button
               type="button"
               className="provenance"
-              onClick={() => store.openSourceView(original.sourceId, original.page)}
+              onClick={() => store.openSourceView(original.sourceId, original.page, null)}
             >
               {snap.sources.find((source) => source.id === original.sourceId)?.title ?? "Source"}
               {original.page !== null ? ` p.${String(original.page)}` : ""} — {original.excerpt}

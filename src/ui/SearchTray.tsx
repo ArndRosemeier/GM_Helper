@@ -78,7 +78,7 @@ export function SearchTray() {
             <button
               type="button"
               className="hit"
-              onClick={() => store.openChunkView(hit.chunkId)}
+              onClick={() => store.openChunkView(hit.chunkId, query.trim().length > 0 ? query.trim() : null)}
             >
               <strong>{hit.title}</strong>
               <span>{hit.snippet}</span>

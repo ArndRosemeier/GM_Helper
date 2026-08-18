@@ -3,6 +3,7 @@ import { useHost } from "../host/HostContext";
 import type { SourceId } from "../host/ids";
 import { extractPdfImagePng, type PdfPageImage } from "../lib/pdfImages";
 import { loadPdf, type LoadedPdf } from "../lib/pdfPage";
+import { runAddCardWithAi } from "./aiPdfCard";
 import { NameCardModal } from "./NameCardModal";
 import { PdfPageNav } from "./PdfPageNav";
 import { PdfPageView } from "./PdfPageView";
@@ -23,6 +24,7 @@ export function CardPdfReader({
   const [page, setPage] = useState(bookmarkPage);
   const [selectedImage, setSelectedImage] = useState<PdfPageImage | null>(null);
   const [pending, setPending] = useState<PendingSave | null>(null);
+  const [topicPending, setTopicPending] = useState(false);
   const source = snap.sources.find((item) => item.id === sourceId) ?? null;
   const bytes = source?.kind === "pdf" ? source.bytes : null;
   const offBookmark = page !== bookmarkPage;
@@ -34,6 +36,7 @@ export function CardPdfReader({
   useEffect(() => {
     setSelectedImage(null);
     setPending(null);
+    setTopicPending(false);
   }, [page]);
 
   useEffect(() => {
@@ -99,39 +102,52 @@ export function CardPdfReader({
     );
   };
 
+  const startAiCard = (topic: string): void => {
+    store.run(runAddCardWithAi(store, source.id, page, topic));
+  };
+
   return (
     <div className="card-pdf">
       {pdf ? (
         <div className="source-viewer-bar">
           <PdfPageNav page={page} pageCount={pdf.pageCount} onChange={setPage} />
-          {offBookmark ? (
-            <div className="card-actions source-save-row">
-              <button
-                type="button"
-                onClick={() => setPending({ kind: "page", picture: selectedImage })}
-              >
-                Add card
-              </button>
-              <button
-                type="button"
-                disabled={selectedImage === null}
-                title={
-                  selectedImage === null
-                    ? "Select a picture on this page first"
-                    : "Make a card from the selected picture only"
-                }
-                onClick={() => {
-                  if (selectedImage === null) {
-                    store.setError("Select a picture on this page first");
-                    return;
+          <div className="card-actions source-save-row">
+            {offBookmark ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setPending({ kind: "page", picture: selectedImage })}
+                >
+                  Add card
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedImage === null}
+                  title={
+                    selectedImage === null
+                      ? "Select a picture on this page first"
+                      : "Make a card from the selected picture only"
                   }
-                  setPending({ kind: "image", image: selectedImage });
-                }}
-              >
-                Add image card
-              </button>
-            </div>
-          ) : null}
+                  onClick={() => {
+                    if (selectedImage === null) {
+                      store.setError("Select a picture on this page first");
+                      return;
+                    }
+                    setPending({ kind: "image", image: selectedImage });
+                  }}
+                >
+                  Add image card
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              disabled={snap.busy !== null}
+              onClick={() => setTopicPending(true)}
+            >
+              Add card with AI
+            </button>
+          </div>
         </div>
       ) : null}
       {pdf ? (
@@ -148,9 +164,22 @@ export function CardPdfReader({
       {pending !== null ? (
         <NameCardModal
           title={pending.kind === "image" ? "Name this image card" : "Name this card"}
+          fieldLabel="Name"
           confirmLabel={pending.kind === "image" ? "Add image card" : "Add card"}
           onCancel={() => setPending(null)}
           onConfirm={confirmSave}
+        />
+      ) : null}
+      {topicPending ? (
+        <NameCardModal
+          title="What should the AI extract?"
+          fieldLabel="Topic"
+          confirmLabel="Add card with AI"
+          onCancel={() => setTopicPending(false)}
+          onConfirm={(topic) => {
+            setTopicPending(false);
+            startAiCard(topic);
+          }}
         />
       ) : null}
     </div>

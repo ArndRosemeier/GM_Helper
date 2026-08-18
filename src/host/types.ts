@@ -271,6 +271,7 @@ export type Source = {
 export type SourceView = {
   sourceId: SourceId;
   page: number | null;
+  searchQuery: string | null;
 };
 
 export type UrlView = {

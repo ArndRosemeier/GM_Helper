@@ -138,11 +138,16 @@ import { parseEntityUrl, titleFromEntityUrl } from "../../lib/entityUrl";
 import { openExternalTab } from "../../lib/iframeEmbed";
 import { localNpcCard } from "../../lib/names";
 import {
+  blobToDataUrl,
+  chatModelAcceptsImages as openRouterChatAcceptsImages,
   completeJson,
   editImagePng,
   generateImagePng,
+  parseAiTopicCard,
   parseGeneratedNpc,
   parseLiftedCard,
+  type ChatContentPart,
+  type ChatMessage,
   type OpenRouterConfig,
 } from "../../lib/openrouter";
 import { errorMessage, isDeadPdfTextLayer, isRenderCancelled } from "../errors";
@@ -700,8 +705,8 @@ export class HostStore {
     this.emit();
   }
 
-  openSourceView(sourceId: SourceId, page: number | null): void {
-    this.sourceView = { sourceId, page };
+  openSourceView(sourceId: SourceId, page: number | null, searchQuery: string | null): void {
+    this.sourceView = { sourceId, page, searchQuery };
     this.rememberSourcePage(sourceId, page);
     this.mediaViewEntityId = null;
     this.urlView = null;
@@ -713,7 +718,7 @@ export class HostStore {
     if (!source) {
       this.setErrorAndThrow(`Source ${sourceId} is missing`);
     }
-    this.openSourceView(sourceId, this.sourcePageById.get(sourceId) ?? 1);
+    this.openSourceView(sourceId, this.sourcePageById.get(sourceId) ?? 1, null);
   }
 
   openMediaView(entityId: EntityId): void {
@@ -757,9 +762,9 @@ export class HostStore {
     this.emit();
   }
 
-  openChunkView(chunkId: ChunkId): void {
+  openChunkView(chunkId: ChunkId, searchQuery: string | null): void {
     const chunk = this.requireChunk(chunkId);
-    this.openSourceView(chunk.sourceId, chunk.page);
+    this.openSourceView(chunk.sourceId, chunk.page, searchQuery);
   }
 
   closeSourceView(): void {
@@ -890,6 +895,125 @@ export class HostStore {
   async saveChunkAsCard(chunkId: ChunkId): Promise<Entity> {
     const chunk = this.requireChunk(chunkId);
     return this.saveSourcePageAsCard(chunk.sourceId, chunk.page, null, chunk.heading);
+  }
+
+  async chatModelAcceptsImages(): Promise<boolean> {
+    return openRouterChatAcceptsImages(this.requireOpenRouter());
+  }
+
+  async generateAiCardFromPdfPage(
+    sourceId: SourceId,
+    pageNumber: number,
+    topicRaw: string,
+    includeImages: boolean,
+  ): Promise<Entity> {
+    const topic = topicRaw.trim();
+    if (topic.length === 0) {
+      this.setErrorAndThrow("Topic to extract is empty");
+    }
+    if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+      this.setErrorAndThrow(`PDF page ${String(pageNumber)} is out of range`);
+    }
+    const source = this.sources.find((item) => item.id === sourceId);
+    if (!source || source.kind !== "pdf" || source.bytes === null) {
+      this.setErrorAndThrow("Source is not a PDF or its bytes are missing");
+    }
+    this.setBusy({
+      title: "Adding a card with AI",
+      detail: `Reading page ${String(pageNumber)} and the next page.`,
+    });
+    try {
+      const { openPdfDocument } = await import("../../lib/pdfjsRuntime");
+      const { extractPdfPagesImages, shrinkPngHalf } = await import("../../lib/pdfImages");
+      const document = await openPdfDocument(await source.bytes.arrayBuffer());
+      const pages = [pageNumber];
+      if (pageNumber + 1 <= document.numPages) {
+        pages.push(pageNumber + 1);
+      }
+      const pageTexts = pages.map((page) => {
+        const text = this.chunks
+          .filter((chunk) => chunk.sourceId === sourceId && chunk.page === page)
+          .map((chunk) => chunk.text)
+          .join("\n\n")
+          .trim();
+        return { page, text };
+      });
+      let fullImages: ReadonlyArray<Blob> = [];
+      if (includeImages) {
+        this.setBusy({
+          title: "Adding a card with AI",
+          detail: "Painting this page and the next so pictures can be read.",
+        });
+        fullImages = await extractPdfPagesImages(document, pages);
+      }
+      const llmImages: Blob[] = [];
+      for (const png of fullImages) {
+        llmImages.push(await shrinkPngHalf(png));
+      }
+      this.setBusy({
+        title: "Adding a card with AI",
+        detail: "The chat model is writing a card about this topic.",
+      });
+      const textBlock = pageTexts
+        .map((item) => {
+          const body = item.text.length > 0 ? item.text : "(no extracted text on this page)";
+          return `--- Page ${String(item.page)} ---\n${body}`;
+        })
+        .join("\n\n");
+      const imageNote =
+        llmImages.length > 0
+          ? `You are also given ${String(llmImages.length)} images in order as image 0 through image ${String(llmImages.length - 1)}. selectedImageIndex is the index of the picture that best illustrates the topic, or null if they are all decorations or unrelated.`
+          : "No images were provided. selectedImageIndex must be null.";
+      const userText = `Topic: ${topic}\n\n${textBlock}\n\n${imageNote}`;
+      let userMessage: ChatMessage;
+      if (llmImages.length === 0) {
+        userMessage = { role: "user", content: userText };
+      } else {
+        const parts: ChatContentPart[] = [{ type: "text", text: userText }];
+        for (const png of llmImages) {
+          parts.push({ type: "image_url", image_url: { url: await blobToDataUrl(png) } });
+        }
+        userMessage = { role: "user", content: parts };
+      }
+      const raw = await completeJson(this.requireOpenRouter(), [
+        {
+          role: "system",
+          content:
+            "You help a Game Master make a free-text run card from PDF pages. " +
+            "Write only about the given topic; ignore unrelated text on the pages. " +
+            "Return JSON only, no markdown fences, no commentary. " +
+            'Format: {"title": string, "text": string, "selectedImageIndex": number|null}. ' +
+            "title is a short card name. text is markdown for the GM about the topic (headings, lists, bold). " +
+            "Do not mention page numbers or that the source is a PDF.",
+        },
+        userMessage,
+      ]);
+      const result = parseAiTopicCard(raw, fullImages.length);
+      let card = withText(emptyRunCard(result.title), result.text);
+      if (result.selectedImageIndex !== null) {
+        const picture = fullImages[result.selectedImageIndex];
+        if (!picture) {
+          this.setErrorAndThrow(`AI card selected missing image ${String(result.selectedImageIndex)}`);
+        }
+        const media: MediaRecord = {
+          id: newMediaId(),
+          campaignId: source.campaignId,
+          mimeType: picture.type || "image/png",
+          role: "other",
+          bytes: picture,
+        };
+        await this.putMedia(media);
+        card = withMedia(card, { kind: "media", mediaId: media.id, role: "other" });
+      }
+      this.sourceView = null;
+      this.mediaViewEntityId = null;
+      this.urlView = null;
+      const entity = await this.createEntity(card, "recurring");
+      this.openCard(entity.id);
+      return entity;
+    } finally {
+      this.setBusy(null);
+    }
   }
 
   async liftChunk(chunkId: ChunkId): Promise<Entity> {

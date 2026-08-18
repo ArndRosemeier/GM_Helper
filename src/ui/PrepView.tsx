@@ -36,7 +36,7 @@ export function PrepView() {
         <ul className="sources">
           {snap.sources.map((source) => (
             <li key={source.id} className="scene-row">
-              <button type="button" onClick={() => store.openSourceView(source.id, 1)}>
+              <button type="button" onClick={() => store.openSourceView(source.id, 1, null)}>
                 {source.title} <em>{source.kind}</em>
               </button>
               <button
