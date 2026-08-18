@@ -26,13 +26,19 @@ import {
   GRID_SIZE_DEFAULT,
   GRID_SIZE_MAX,
   GRID_SIZE_MIN,
+  TOKEN_SIZE_MIN,
   nextTokenScale,
   TOKEN_STAMP_COLORS,
   tokenSizeFittingGrid,
   DEFAULT_CARD_CATEGORIES,
+  ENCOUNTER_CATEGORY,
+  ENCOUNTER_TAG,
+  NPC_CATEGORY,
+  categoryHasCombatStats,
   type BattlegroundToken,
   type BusyStatus,
   type Campaign,
+  type EncounterBoard,
   type EncounterParticipant,
   type EncounterState,
   type Entity,
@@ -50,6 +56,22 @@ import {
 import { migrateOpenDatabase, migrationBanner, SCHEMA_VERSION } from "../persist";
 import { migrateArchivePayload, migrateCardArchivePayload, parseAnyArchiveManifest, parseArchiveManifest } from "../persist/archiveMigrate";
 import { emptyEncounter, foldScenesIntoEncounters } from "../persist/foldScenes";
+import {
+  battlemapTitleForMedia,
+  boardOf,
+  cardReferencedMediaIds,
+  cloneEncounterBoard,
+  combatHpForParticipant,
+  encounterCardTitle,
+  encounterFromCard,
+  instanceCurrentHpFor,
+  isEncounterCard,
+  isPlayerCard,
+  scrubEntityFromBoard,
+  withEncounterBlock,
+  withParticipantHpOwnership,
+} from "../encounter";
+import { snapPointToGrid, tokenSpanCells } from "../gridSnap";
 import { SCHEMA_META_KEY } from "../persist/schema";
 import {
   formatMigrationWarnings,
@@ -98,6 +120,10 @@ import {
   withMedia,
   withoutMediaId,
   withCategory,
+  withCombatStats,
+  combatStatsFrom,
+  emptyCombatStats,
+  syncCombatStatsForCategory,
   withProvenance,
   withSecret,
   withText,
@@ -134,6 +160,9 @@ export type HostSnapshot = {
   sources: ReadonlyArray<Source>;
   chunks: ReadonlyArray<SourceChunk>;
   encounter: EncounterState | null;
+  /** Board shown on the table surface: opened encounter card, else session scratch. */
+  tableEncounter: EncounterBoard | null;
+  openedEncounterEntityId: EntityId | null;
   settings: AppSettings;
   mode: AppMode;
   surface: Surface;
@@ -151,6 +180,8 @@ export type HostSnapshot = {
 
 const META_CAMPAIGN = "currentCampaignId";
 const META_SESSION = "currentSessionId";
+
+type EncounterTarget = { kind: "session" } | { kind: "card"; entityId: EntityId };
 
 export class HostStore {
   private db: GmDb | null = null;
@@ -171,6 +202,7 @@ export class HostStore {
   private chunks: SourceChunk[] = [];
   private media: MediaRecord[] = [];
   private encounter: EncounterState | null = null;
+  private openedEncounterEntityId: EntityId | null = null;
   private settings: AppSettings = DEFAULT_SETTINGS;
   private currentCampaignId: CampaignId | null = null;
   private currentSessionId: SessionId | null = null;
@@ -284,6 +316,9 @@ export class HostStore {
       return;
     }
     this.surface = surface;
+    if (surface === "gm") {
+      this.openedEncounterEntityId = null;
+    }
     this.emit();
   }
 
@@ -308,6 +343,10 @@ export class HostStore {
 
   async selectSession(id: SessionId): Promise<void> {
     this.currentSessionId = id;
+    this.openedEncounterEntityId = null;
+    if (this.surface === "table") {
+      this.surface = "gm";
+    }
     await this.requireDb().put("meta", id, META_SESSION);
     this.encounter = (await this.requireDb().get("encounters", id)) ?? null;
     this.emit();
@@ -316,6 +355,10 @@ export class HostStore {
   async clearSession(): Promise<void> {
     this.currentSessionId = null;
     this.encounter = null;
+    this.openedEncounterEntityId = null;
+    if (this.surface === "table") {
+      this.surface = "gm";
+    }
     await this.requireDb().put("meta", "", META_SESSION);
     this.emit();
   }
@@ -447,6 +490,78 @@ export class HostStore {
       return;
     }
     await this.updateRunCard(id, withCategory(entity.runCard, next));
+    await this.syncParticipantHpOwnership(id, combatStatsFrom(entity.runCard)?.currentHp ?? null);
+  }
+
+  async setEntityCombatStats(
+    id: EntityId,
+    maxHp: number,
+    currentHp: number | null,
+    initiativeBonus: number,
+  ): Promise<void> {
+    const entity = this.requireEntity(id);
+    if (!categoryHasCombatStats(entity.runCard.category)) {
+      this.setErrorAndThrow("Only Player and NPC cards have HP and initiative bonus");
+    }
+    if (!Number.isInteger(maxHp)) {
+      this.setErrorAndThrow("Max HP must be a whole number");
+    }
+    if (!Number.isInteger(initiativeBonus)) {
+      this.setErrorAndThrow("Initiative bonus must be a whole number");
+    }
+    if (isPlayerCard(entity)) {
+      if (currentHp === null || !Number.isInteger(currentHp)) {
+        this.setErrorAndThrow("Player current HP must be a whole number");
+      }
+    } else if (currentHp !== null) {
+      this.setErrorAndThrow("NPC current HP is stored on the encounter, not the card");
+    }
+    const existing = combatStatsFrom(entity.runCard) ?? emptyCombatStats();
+    if (
+      existing.maxHp === maxHp &&
+      existing.currentHp === currentHp &&
+      existing.initiativeBonus === initiativeBonus
+    ) {
+      return;
+    }
+    await this.updateRunCard(
+      id,
+      withCombatStats(entity.runCard, { kind: "combat", maxHp, currentHp, initiativeBonus }),
+    );
+  }
+
+  async setParticipantCurrentHp(participantId: ParticipantId, currentHp: number): Promise<void> {
+    if (!Number.isInteger(currentHp)) {
+      this.setErrorAndThrow("Current HP must be a whole number");
+    }
+    const encounter = this.requireTargetEncounter();
+    const participant = encounter.participants.find((item) => item.id === participantId);
+    if (!participant) {
+      this.setErrorAndThrow("Encounter has no such participant");
+    }
+    const owner = this.requireEntity(participant.entityId);
+    const hp = combatHpForParticipant(participant, owner);
+    if (hp === null) {
+      this.setErrorAndThrow(`“${owner.runCard.title}” has no hit points`);
+    }
+    if (hp.currentHp === currentHp) {
+      return;
+    }
+    if (hp.currentOwnedBy === "card") {
+      const stats = combatStatsFrom(owner.runCard);
+      if (stats === null) {
+        this.setErrorAndThrow(`Player “${owner.runCard.title}” has no combat stats`);
+      }
+      await this.updateRunCard(owner.id, withCombatStats(owner.runCard, { ...stats, currentHp }));
+      return;
+    }
+    await this.putEncounter({
+      ...encounter,
+      participants: encounter.participants.map((item) =>
+        item.id === participantId ? { ...item, currentHp } : item,
+      ),
+    });
+    this.emit();
   }
 
   async setEntitySession(id: EntityId, sessionId: SessionId | null): Promise<void> {
@@ -473,23 +588,39 @@ export class HostStore {
     await this.requireDb().delete("entities", id);
     this.markDirty();
     this.entities = this.entities.filter((entity) => entity.id !== id);
-    if (this.encounter) {
-      const participants = this.encounter.participants.filter((participant) => participant.entityId !== id);
-      const tokens = this.encounter.tokens.filter((token) => token.entityId !== id);
-      if (participants.length === 0 && this.encounter.participants.length > 0) {
-        await this.endEncounter();
-      } else if (
-        participants.length !== this.encounter.participants.length ||
-        tokens.length !== this.encounter.tokens.length
-      ) {
-        await this.putEncounter({
-          ...this.encounter,
-          participants,
-          activeIndex:
-            participants.length === 0 ? 0 : Math.min(this.encounter.activeIndex, participants.length - 1),
-          tokens,
-        });
+    if (this.openedEncounterEntityId === id) {
+      this.openedEncounterEntityId = null;
+      if (this.surface === "table") {
+        this.surface = "gm";
       }
+    }
+    if (this.encounter) {
+      const next = scrubEntityFromBoard(this.encounter, id);
+      if (next !== this.encounter) {
+        if (next.participants.length === 0 && this.encounter.participants.length > 0) {
+          await this.endEncounter();
+        } else {
+          await this.putEncounter(
+            { ...this.encounter, ...next, sessionId: this.encounter.sessionId },
+            { kind: "session" },
+          );
+        }
+      }
+    }
+    for (const entity of this.entities) {
+      const board = encounterFromCard(entity);
+      if (board === null) {
+        continue;
+      }
+      const next = scrubEntityFromBoard(board, id);
+      if (next === board) {
+        continue;
+      }
+      await this.putEntity({
+        ...entity,
+        runCard: withEncounterBlock(entity.runCard, next),
+        updatedAt: nowIso(),
+      });
     }
     this.tableCardIds = this.tableCardIds.filter((cardId) => cardId !== id);
     if (this.openedEntityId === id) {
@@ -841,7 +972,9 @@ export class HostStore {
         npc.secret,
       );
     }
-    const npcCategory = this.requireCampaign().cardCategories.includes("NPC") ? "NPC" : "";
+    const npcCategory = this.requireCampaign().cardCategories.includes(NPC_CATEGORY)
+      ? NPC_CATEGORY
+      : "";
     const entity = await this.createEntity({ ...card, category: npcCategory }, "recurring");
     if (withPortrait) {
       this.setBusy({
@@ -1022,13 +1155,23 @@ export class HostStore {
     }
     if (this.encounter?.mapMediaId === mediaId) {
       await this.setEncounterMap(null);
-      return;
+    }
+    for (const entity of this.entities) {
+      const board = encounterFromCard(entity);
+      if (board === null || board.mapMediaId !== mediaId) {
+        continue;
+      }
+      await this.putEntity({
+        ...entity,
+        runCard: withEncounterBlock(entity.runCard, { ...board, mapMediaId: null }),
+        updatedAt: nowIso(),
+      });
     }
     this.emit();
   }
 
   async addToken(entityId: EntityId, visible: boolean): Promise<void> {
-    const encounter = await this.ensureEncounter();
+    const encounter = await this.ensureTargetEncounter();
     const entity = this.requireEntity(entityId);
     const token: BattlegroundToken = {
       id: newTokenId(),
@@ -1056,7 +1199,7 @@ export class HostStore {
     if (!TOKEN_STAMP_COLORS.includes(color)) {
       this.setErrorAndThrow(`Unknown token color: ${color}`);
     }
-    const encounter = await this.ensureEncounter();
+    const encounter = await this.ensureTargetEncounter();
     const token: BattlegroundToken = {
       id: newTokenId(),
       entityId: null,
@@ -1078,8 +1221,17 @@ export class HostStore {
 
   async placeCardOnBattleground(entityId: EntityId): Promise<void> {
     const entity = this.requireEntity(entityId);
+    if (isEncounterCard(entity)) {
+      this.setErrorAndThrow("Encounter cards cannot be added to an encounter");
+    }
     if (isMapCard(entity)) {
-      await this.dropOnEncounter(entityId);
+      const mediaId = mapMediaIdFromCard(entity);
+      if (mediaId === null) {
+        this.setErrorAndThrow(`Map card “${entity.runCard.title}” has no picture`);
+      }
+      const encounter = await this.ensureTargetEncounter();
+      await this.putEncounter({ ...encounter, mapMediaId: mediaId });
+      this.emit();
       return;
     }
     await this.addToken(entityId, true);
@@ -1089,7 +1241,7 @@ export class HostStore {
     if (this.currentSessionId === null) {
       return;
     }
-    const encounter = await this.ensureEncounter();
+    const encounter = await this.ensureTargetEncounter();
     if (encounter.tokens.some((token) => token.entityId === entityId)) {
       const tokens = encounter.tokens.map((token) =>
         token.entityId === entityId ? { ...token, visible: true } : token,
@@ -1105,7 +1257,7 @@ export class HostStore {
   }
 
   async moveToken(tokenId: TokenId, x: number, y: number): Promise<void> {
-    const encounter = await this.ensureEncounter();
+    const encounter = await this.ensureTargetEncounter();
     await this.putEncounter({
       ...encounter,
       tokens: this.mapEncounterToken(encounter, tokenId, (token) => ({ ...token, x, y })),
@@ -1113,8 +1265,40 @@ export class HostStore {
     this.emit();
   }
 
+  async snapEncounterTokens(boardWidth: number, boardHeight: number): Promise<void> {
+    if (!(boardWidth > 0) || !(boardHeight > 0)) {
+      this.setErrorAndThrow("Battleground board has no size");
+    }
+    const encounter = this.requireTargetEncounter();
+    const gridSize = encounter.gridSize;
+    if (gridSize === null) {
+      return;
+    }
+    let changed = false;
+    const tokens = encounter.tokens.map((token) => {
+      const snapped = snapPointToGrid(
+        token.x,
+        token.y,
+        boardWidth,
+        boardHeight,
+        gridSize,
+        tokenSpanCells(token.scale),
+      );
+      if (snapped.x === token.x && snapped.y === token.y) {
+        return token;
+      }
+      changed = true;
+      return { ...token, x: snapped.x, y: snapped.y };
+    });
+    if (!changed) {
+      return;
+    }
+    await this.putEncounter({ ...encounter, tokens });
+    this.emit();
+  }
+
   async adjustTokenScale(tokenId: TokenId, delta: -1 | 1): Promise<void> {
-    const encounter = await this.ensureEncounter();
+    const encounter = await this.ensureTargetEncounter();
     await this.putEncounter({
       ...encounter,
       tokens: this.mapEncounterToken(encounter, tokenId, (token) => ({
@@ -1126,7 +1310,7 @@ export class HostStore {
   }
 
   async removeToken(tokenId: TokenId): Promise<void> {
-    const encounter = await this.ensureEncounter();
+    const encounter = await this.ensureTargetEncounter();
     const token = encounter.tokens.find((item) => item.id === tokenId);
     if (!token) {
       this.setErrorAndThrow(`Encounter has no token ${tokenId}`);
@@ -1153,24 +1337,25 @@ export class HostStore {
         `Grid scale must be off, or an integer from ${String(GRID_SIZE_MIN)} to ${String(GRID_SIZE_MAX)}`,
       );
     }
-    const encounter = await this.ensureEncounter();
+    const encounter = await this.ensureTargetEncounter();
     if (encounter.gridSize === size) {
       return;
     }
     await this.putEncounter({
       ...encounter,
       gridSize: size,
+      tokenSize: size === null ? encounter.tokenSize : tokenSizeFittingGrid(size),
     });
     this.emit();
   }
 
   async setTokenSize(size: number): Promise<void> {
-    if (!Number.isInteger(size) || size < GRID_SIZE_MIN || size > GRID_SIZE_MAX) {
+    if (!Number.isInteger(size) || size < TOKEN_SIZE_MIN || size > GRID_SIZE_MAX) {
       this.setErrorAndThrow(
-        `Token scale must be an integer from ${String(GRID_SIZE_MIN)} to ${String(GRID_SIZE_MAX)}`,
+        `Token scale must be an integer from ${String(TOKEN_SIZE_MIN)} to ${String(GRID_SIZE_MAX)}`,
       );
     }
-    const encounter = await this.ensureEncounter();
+    const encounter = await this.ensureTargetEncounter();
     if (encounter.tokenSize === size) {
       return;
     }
@@ -1182,7 +1367,7 @@ export class HostStore {
   }
 
   async setTokenVisible(tokenId: TokenId, visible: boolean): Promise<void> {
-    const encounter = await this.ensureEncounter();
+    const encounter = await this.ensureTargetEncounter();
     await this.putEncounter({
       ...encounter,
       tokens: this.mapEncounterToken(encounter, tokenId, (token) => ({ ...token, visible })),
@@ -1192,6 +1377,9 @@ export class HostStore {
 
   async addParticipant(entityId: EntityId): Promise<void> {
     const entity = this.requireEntity(entityId);
+    if (isEncounterCard(entity)) {
+      this.setErrorAndThrow("Encounter cards cannot be added to an encounter");
+    }
     if (isMapCard(entity)) {
       await this.dropOnEncounter(entityId);
       return;
@@ -1199,20 +1387,26 @@ export class HostStore {
     const extra = this.participantFromEntity(entityId);
     const existing = this.encounter;
     if (!existing) {
-      await this.putEncounter({
-        ...emptyEncounter(this.requireSessionId()),
-        participants: [extra],
-      });
+      await this.putEncounter(
+        {
+          ...emptyEncounter(this.requireSessionId()),
+          participants: [extra],
+        },
+        { kind: "session" },
+      );
       this.emit();
       return;
     }
-    await this.putEncounter({
-      ...existing,
-      participants: [...existing.participants, extra],
-      tokens: existing.live
-        ? [...existing.tokens, this.tokenForParticipant(extra, existing.tokens.length)]
-        : existing.tokens,
-    });
+    await this.putEncounter(
+      {
+        ...existing,
+        participants: [...existing.participants, extra],
+        tokens: existing.live
+          ? [...existing.tokens, this.tokenForParticipant(extra, existing.tokens.length)]
+          : existing.tokens,
+      },
+      { kind: "session" },
+    );
     this.emit();
   }
 
@@ -1221,63 +1415,38 @@ export class HostStore {
     if (!encounter) {
       this.setErrorAndThrow("Encounter has no one in it");
     }
-    let mapMediaId = encounter.mapMediaId;
-    const fighters: EncounterParticipant[] = [];
-    for (const participant of encounter.participants) {
-      const entity = this.entities.find((item) => item.id === participant.entityId) ?? null;
-      if (entity !== null && isMapCard(entity)) {
-        const mediaId = mapMediaIdFromCard(entity);
-        if (mediaId !== null) {
-          mapMediaId = mediaId;
-        }
-        continue;
-      }
-      fighters.push(participant);
-    }
-    if (fighters.length === 0) {
+    const live = this.liveBoard(encounter);
+    if (live.participants.length === 0) {
       this.setErrorAndThrow("Encounter has no one in it");
     }
-    const fighterEntityIds = new Set(fighters.map((fighter) => fighter.entityId));
-    const kept = encounter.tokens.filter(
-      (token) =>
-        token.entityId === null ||
-        (token.participantId === null &&
-          token.entityId !== null &&
-          !fighterEntityIds.has(token.entityId)),
-    );
-    const gridSize = encounter.gridSize ?? GRID_SIZE_DEFAULT;
-    const tokenSize = encounter.live
-      ? encounter.tokenSize
-      : tokenSizeFittingGrid(gridSize);
-    await this.putEncounter({
-      ...encounter,
-      participants: fighters,
-      mapMediaId,
-      live: true,
-      tokenSize,
-      tokens: [...this.tokensFromRoster(fighters, true), ...kept],
-    });
+    this.openedEncounterEntityId = null;
+    await this.putEncounter(live, { kind: "session" });
     this.setSurface("table");
   }
 
   async resetEncounterBoard(): Promise<void> {
-    const encounter = this.requireEncounter();
+    const encounter = this.requireTargetEncounter();
     if (encounter.participants.length === 0) {
       this.setErrorAndThrow("Encounter has no one in it");
     }
-    const gridSize = encounter.gridSize ?? GRID_SIZE_DEFAULT;
     await this.putEncounter({
       ...encounter,
       activeIndex: 0,
       live: true,
-      tokenSize: tokenSizeFittingGrid(gridSize),
-      tokens: this.tokensFromRoster(encounter.participants, false),
+      tokenSize:
+        encounter.gridSize === null
+          ? encounter.tokenSize
+          : tokenSizeFittingGrid(encounter.gridSize),
+      tokens: this.tokensFromRoster(encounter, encounter.participants, false),
     });
     this.emit();
   }
 
   async dropOnEncounter(entityId: EntityId): Promise<void> {
     const entity = this.requireEntity(entityId);
+    if (isEncounterCard(entity)) {
+      this.setErrorAndThrow("Encounter cards cannot be added to an encounter");
+    }
     if (isMapCard(entity)) {
       const mediaId = mapMediaIdFromCard(entity);
       if (mediaId === null) {
@@ -1292,17 +1461,20 @@ export class HostStore {
   async setEncounterMap(mapMediaId: MediaId | null): Promise<void> {
     const existing = this.encounter;
     if (!existing) {
-      await this.putEncounter({
-        ...emptyEncounter(this.requireSessionId()),
-        mapMediaId,
-      });
+      await this.putEncounter(
+        {
+          ...emptyEncounter(this.requireSessionId()),
+          mapMediaId,
+        },
+        { kind: "session" },
+      );
       this.emit();
       return;
     }
     if (existing.mapMediaId === mapMediaId) {
       return;
     }
-    await this.putEncounter({ ...existing, mapMediaId });
+    await this.putEncounter({ ...existing, mapMediaId }, { kind: "session" });
     this.emit();
   }
 
@@ -1313,17 +1485,20 @@ export class HostStore {
       await this.endEncounter();
       return;
     }
-    await this.putEncounter({
-      ...existing,
-      participants,
-      activeIndex: Math.min(existing.activeIndex, participants.length - 1),
-      tokens: existing.tokens.filter((token) => token.participantId !== participantId),
-    });
+    await this.putEncounter(
+      {
+        ...existing,
+        participants,
+        activeIndex: Math.min(existing.activeIndex, participants.length - 1),
+        tokens: existing.tokens.filter((token) => token.participantId !== participantId),
+      },
+      { kind: "session" },
+    );
     this.emit();
   }
 
   async nextTurn(): Promise<void> {
-    const existing = this.requireEncounter();
+    const existing = this.requireTargetEncounter();
     if (existing.participants.length === 0) {
       this.setErrorAndThrow("Encounter has no participants");
     }
@@ -1337,7 +1512,7 @@ export class HostStore {
   }
 
   async adjustParticipantTrack(participantId: ParticipantId, trackId: TrackId, delta: number): Promise<void> {
-    const existing = this.requireEncounter();
+    const existing = this.requireTargetEncounter();
     await this.putEncounter({
       ...existing,
       participants: existing.participants.map((participant) => {
@@ -1361,7 +1536,7 @@ export class HostStore {
   }
 
   async addParticipantTrack(participantId: ParticipantId, label: string, max: number | null): Promise<void> {
-    const existing = this.requireEncounter();
+    const existing = this.requireTargetEncounter();
     await this.putEncounter({
       ...existing,
       participants: existing.participants.map((participant) =>
@@ -1373,11 +1548,80 @@ export class HostStore {
     this.emit();
   }
 
+  async clearEncounter(): Promise<void> {
+    const participants = (this.encounter?.participants ?? []).filter((participant) => {
+      const owner = this.entities.find((item) => item.id === participant.entityId);
+      return owner !== undefined && isPlayerCard(owner);
+    });
+    if (participants.length === 0) {
+      if (this.encounter) {
+        await this.endEncounter();
+      }
+      return;
+    }
+    await this.putEncounter(
+      {
+        ...emptyEncounter(this.requireSessionId()),
+        participants,
+      },
+      { kind: "session" },
+    );
+    this.emit();
+  }
+
   async endEncounter(): Promise<void> {
     const sessionId = this.requireSessionId();
     await this.requireDb().delete("encounters", sessionId);
     this.markDirty();
     this.encounter = null;
+    this.emit();
+  }
+
+  async addEncounterAsCard(): Promise<Entity> {
+    const encounter = this.encounter;
+    if (!encounter || (encounter.participants.length === 0 && encounter.mapMediaId === null)) {
+      this.setErrorAndThrow("Encounter has no map or participants");
+    }
+    await this.ensureEncounterCategory();
+    if (!this.categoryFilters.includes(ENCOUNTER_CATEGORY)) {
+      this.categoryFilters = [...this.categoryFilters, ENCOUNTER_CATEGORY];
+    }
+    const mapTitle = battlemapTitleForMedia(this.entities, encounter.mapMediaId);
+    const card: RunCard = withEncounterBlock(
+      {
+        title: encounterCardTitle(mapTitle),
+        tags: [ENCOUNTER_TAG],
+        category: ENCOUNTER_CATEGORY,
+        blocks: [],
+      },
+      cloneEncounterBoard(encounter),
+    );
+    return this.createEntity(card, "recurring");
+  }
+
+  async openEncounterCard(id: EntityId): Promise<void> {
+    const entity = this.requireEntity(id);
+    if (!isEncounterCard(entity)) {
+      this.setErrorAndThrow(`Card “${entity.runCard.title}” is not an encounter`);
+    }
+    const board = encounterFromCard(entity);
+    if (board === null) {
+      this.setErrorAndThrow(`Card “${entity.runCard.title}” has no encounter`);
+    }
+    const sessionId = entity.sessionId ?? this.requireSessionId();
+    let next: EncounterState = { ...board, sessionId };
+    if (!next.live && next.participants.length > 0) {
+      const live = this.liveBoard(next);
+      if (live.participants.length > 0) {
+        next = live;
+        await this.putEncounter(next, { kind: "card", entityId: id });
+      }
+    }
+    this.openedEncounterEntityId = id;
+    if (this.surface !== "table") {
+      this.setSurface("table");
+      return;
+    }
     this.emit();
   }
 
@@ -1483,7 +1727,7 @@ export class HostStore {
       detail: `Packing “${entity.runCard.title}” into a ZIP.`,
     });
     try {
-      const mediaIds = new Set(mediaBlocksFrom(entity.runCard).map((block) => block.mediaId));
+      const mediaIds = new Set(cardReferencedMediaIds(entity.runCard));
       const provenance = provenanceFrom(entity.runCard);
       const sourceIds = new Set<SourceId>();
       if (provenance !== null) {
@@ -1859,6 +2103,103 @@ export class HostStore {
     return this.encounter;
   }
 
+  private encounterTarget(): EncounterTarget {
+    if (this.surface === "table" && this.openedEncounterEntityId !== null) {
+      return { kind: "card", entityId: this.openedEncounterEntityId };
+    }
+    return { kind: "session" };
+  }
+
+  private encounterStateFromCard(entity: Entity): EncounterState {
+    const board = encounterFromCard(entity);
+    if (board === null) {
+      this.setErrorAndThrow(`Card “${entity.runCard.title}” has no encounter`);
+    }
+    const sessionId = entity.sessionId ?? this.requireSessionId();
+    return { ...board, sessionId };
+  }
+
+  private requireTargetEncounter(): EncounterState {
+    const target = this.encounterTarget();
+    if (target.kind === "session") {
+      return this.requireEncounter();
+    }
+    return this.encounterStateFromCard(this.requireEntity(target.entityId));
+  }
+
+  private async ensureTargetEncounter(): Promise<EncounterState> {
+    const target = this.encounterTarget();
+    if (target.kind === "session") {
+      return this.ensureEncounter();
+    }
+    return this.requireTargetEncounter();
+  }
+
+  private liveBoard(encounter: EncounterState): EncounterState {
+    let mapMediaId = encounter.mapMediaId;
+    const fighters: EncounterParticipant[] = [];
+    for (const participant of encounter.participants) {
+      const entity = this.entities.find((item) => item.id === participant.entityId) ?? null;
+      if (entity !== null && isMapCard(entity)) {
+        const mediaId = mapMediaIdFromCard(entity);
+        if (mediaId !== null) {
+          mapMediaId = mediaId;
+        }
+        continue;
+      }
+      fighters.push(participant);
+    }
+    if (fighters.length === 0) {
+      return { ...encounter, participants: [], mapMediaId };
+    }
+    const fighterEntityIds = new Set(fighters.map((fighter) => fighter.entityId));
+    const kept = encounter.tokens.filter(
+      (token) =>
+        token.entityId === null ||
+        (token.participantId === null &&
+          token.entityId !== null &&
+          !fighterEntityIds.has(token.entityId)),
+    );
+    const gridSize = encounter.gridSize ?? GRID_SIZE_DEFAULT;
+    const tokenSize = encounter.live ? encounter.tokenSize : tokenSizeFittingGrid(gridSize);
+    return {
+      ...encounter,
+      participants: fighters,
+      mapMediaId,
+      live: true,
+      tokenSize,
+      tokens: [...this.tokensFromRoster(encounter, fighters, true), ...kept],
+    };
+  }
+
+  private async ensureEncounterCategory(): Promise<void> {
+    const campaign = this.requireCampaign();
+    if (campaign.cardCategories.includes(ENCOUNTER_CATEGORY)) {
+      return;
+    }
+    const next: Campaign = {
+      ...campaign,
+      cardCategories: [...campaign.cardCategories, ENCOUNTER_CATEGORY],
+    };
+    await this.requireDb().put("campaigns", next);
+    this.markDirty();
+    this.campaigns = this.campaigns.map((item) => (item.id === next.id ? next : item));
+    if (!this.categoryFilters.includes(ENCOUNTER_CATEGORY)) {
+      this.categoryFilters = [...this.categoryFilters, ENCOUNTER_CATEGORY];
+    }
+  }
+
+  private tableEncounterBoard(): EncounterBoard | null {
+    if (this.openedEncounterEntityId !== null) {
+      const entity = this.entities.find((item) => item.id === this.openedEncounterEntityId);
+      if (!entity) {
+        return this.encounter;
+      }
+      return encounterFromCard(entity) ?? this.encounter;
+    }
+    return this.encounter;
+  }
+
   private requireOpenRouter(): OpenRouterConfig {
     const key = this.settings.openRouterApiKey;
     if (key === null) {
@@ -1895,7 +2236,7 @@ export class HostStore {
       return this.encounter;
     }
     const encounter = emptyEncounter(this.requireSessionId());
-    await this.putEncounter(encounter);
+    await this.putEncounter(encounter, { kind: "session" });
     return encounter;
   }
 
@@ -1907,6 +2248,7 @@ export class HostStore {
       label: entity.runCard.title,
       tracks: cloneTracks(tracksFrom(entity.runCard)),
       conditions: [],
+      currentHp: instanceCurrentHpFor(entity, null),
     };
   }
 
@@ -1930,12 +2272,13 @@ export class HostStore {
   }
 
   private tokensFromRoster(
+    encounter: EncounterState,
     participants: ReadonlyArray<EncounterParticipant>,
     reuseLayout: boolean,
   ): BattlegroundToken[] {
     const pool = new Map<EntityId, BattlegroundToken[]>();
-    if (reuseLayout && this.encounter) {
-      for (const token of this.encounter.tokens) {
+    if (reuseLayout) {
+      for (const token of encounter.tokens) {
         if (token.entityId === null) {
           continue;
         }
@@ -1976,7 +2319,7 @@ export class HostStore {
       id: newEntityId(),
       campaignId: this.requireCampaignId(),
       sessionId: this.currentSessionId,
-      runCard: { ...runCard, category },
+      runCard: syncCombatStatsForCategory({ ...runCard, category }),
       lifecycle,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -2021,10 +2364,57 @@ export class HostStore {
     this.entities = next;
   }
 
-  private async putEncounter(encounter: EncounterState): Promise<void> {
-    await this.requireDb().put("encounters", encounter);
-    this.markDirty();
-    this.encounter = encounter;
+  private async syncParticipantHpOwnership(
+    entityId: EntityId,
+    previousCardCurrentHp: number | null,
+  ): Promise<void> {
+    const entity = this.requireEntity(entityId);
+    if (this.encounter) {
+      const next = withParticipantHpOwnership(this.encounter, entity, previousCardCurrentHp);
+      if (next !== this.encounter) {
+        await this.putEncounter(
+          { ...next, sessionId: this.encounter.sessionId },
+          { kind: "session" },
+        );
+      }
+    }
+    const cards = [...this.entities];
+    for (const card of cards) {
+      const board = encounterFromCard(card);
+      if (board === null) {
+        continue;
+      }
+      const next = withParticipantHpOwnership(board, entity, previousCardCurrentHp);
+      if (next === board) {
+        continue;
+      }
+      await this.putEntity({
+        ...card,
+        runCard: withEncounterBlock(card.runCard, next),
+        updatedAt: nowIso(),
+      });
+    }
+  }
+
+  private async putEncounter(
+    encounter: EncounterState,
+    target: EncounterTarget = this.encounterTarget(),
+  ): Promise<void> {
+    if (target.kind === "session") {
+      await this.requireDb().put("encounters", encounter);
+      this.markDirty();
+      this.encounter = encounter;
+      return;
+    }
+    const entity = this.requireEntity(target.entityId);
+    if (!isEncounterCard(entity)) {
+      this.setErrorAndThrow(`Card “${entity.runCard.title}” is not an encounter`);
+    }
+    await this.putEntity({
+      ...entity,
+      runCard: withEncounterBlock(entity.runCard, boardOf(encounter)),
+      updatedAt: nowIso(),
+    });
   }
 
   private async putMedia(media: MediaRecord): Promise<void> {
@@ -2070,6 +2460,10 @@ export class HostStore {
   private async loadCampaign(id: CampaignId): Promise<void> {
     const db = this.requireDb();
     this.currentCampaignId = id;
+    this.openedEncounterEntityId = null;
+    if (this.surface === "table") {
+      this.surface = "gm";
+    }
     await db.put("meta", id, META_CAMPAIGN);
     const warnings: MigrationWarning[] = [];
     this.entities = readStored(await db.getAllFromIndex("entities", "campaignId", id), readEntity, warnings);
@@ -2098,7 +2492,7 @@ export class HostStore {
       ) {
         this.encounter = {
           ...this.encounter,
-          tokens: this.tokensFromRoster(this.encounter.participants, false),
+          tokens: this.tokensFromRoster(this.encounter, this.encounter.participants, false),
         };
         await this.putEncounter(this.encounter);
       }
@@ -2118,7 +2512,7 @@ export class HostStore {
         ) {
           this.encounter = {
             ...this.encounter,
-            tokens: this.tokensFromRoster(this.encounter.participants, false),
+            tokens: this.tokensFromRoster(this.encounter, this.encounter.participants, false),
           };
           await this.putEncounter(this.encounter);
         }
@@ -2425,6 +2819,8 @@ export class HostStore {
       sources: this.sources,
       chunks: this.chunks,
       encounter: this.encounter,
+      tableEncounter: this.tableEncounterBoard(),
+      openedEncounterEntityId: this.openedEncounterEntityId,
       settings: this.settings,
       mode: this.mode,
       surface: this.surface,
@@ -2475,12 +2871,27 @@ function remapCardRefs(
       blocks.push({ ...block, sourceId: nextId });
       continue;
     }
+    if (block.kind === "encounter") {
+      if (block.mapMediaId === null) {
+        blocks.push(block);
+        continue;
+      }
+      const nextId = mediaIdMap.get(block.mapMediaId);
+      if (!nextId) {
+        throw new Error(`Card references missing image ${block.mapMediaId}`);
+      }
+      blocks.push({ ...block, mapMediaId: nextId });
+      continue;
+    }
     blocks.push(block);
   }
   return { ...card, blocks };
 }
 
 function isMapCard(entity: Entity): boolean {
+  if (isEncounterCard(entity)) {
+    return false;
+  }
   if (entity.runCard.category === "Battlemap") {
     return true;
   }

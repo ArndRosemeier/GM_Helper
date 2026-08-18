@@ -156,16 +156,31 @@ function perMillion(perToken: number): number {
   return perToken * 1_000_000;
 }
 
+/**
+ * OpenRouter stores many flat per-image output rates as `image_output` tokens.
+ * One generated image is billed as this many completion tokens (see their Images API usage example).
+ */
+const OPENROUTER_IMAGE_OUTPUT_TOKENS = 4175;
+
+function isPackedPerImageRate(perImage: number): boolean {
+  const halfCents = perImage * 200;
+  return Math.abs(halfCents - Math.round(halfCents)) < 1e-6;
+}
+
 export function formatModelPricing(
   pricing: OpenRouterModelPricing,
   list: "chat" | "image",
 ): string {
   if (list === "image") {
+    if (pricing.imageOutputPerToken !== null && pricing.imageOutputPerToken > 0) {
+      const perImage = pricing.imageOutputPerToken * OPENROUTER_IMAGE_OUTPUT_TOKENS;
+      if (isPackedPerImageRate(perImage)) {
+        return `${formatUsd(perImage)}/img`;
+      }
+      return `${formatUsd(perMillion(pricing.imageOutputPerToken))}/M img tok`;
+    }
     if (pricing.imagePerImage !== null && pricing.imagePerImage > 0) {
       return `${formatUsd(pricing.imagePerImage)}/img`;
-    }
-    if (pricing.imageOutputPerToken !== null && pricing.imageOutputPerToken > 0) {
-      return `${formatUsd(perMillion(pricing.imageOutputPerToken))}/M img tok`;
     }
   }
   if (pricing.promptPerToken < 0 || pricing.completionPerToken < 0) {

@@ -1,0 +1,36 @@
+---
+description: UI must work equally well on PCs and tablets (touch + pointer, both layouts)
+globs: src/ui/**/*.{ts,tsx},src/index.css,src/App.tsx
+alwaysApply: false
+---
+
+# PC and tablet parity
+
+This app is used at a desk **and** at the table on a tablet. Every UI change must be fully usable on both. Tablet is not a stripped-down or “mobile lite” mode.
+
+## Interaction
+
+- Prefer **Pointer Events** (`pointerdown` / `pointermove` / `pointerup`) over `mousedown` / `touchstart`. Support mouse **and** touch; pinch/pan already uses multi-pointer (see `useBoardPanZoom`).
+- Interactive controls need a **visible, tappable control**. Do not put a required action behind hover, right-click, or hover-only chrome.
+- Hover may **enhance** mouse UX only. Gate it so tablets with a connected mouse still get tap-visible chrome:
+
+```css
+@media (hover: hover) and (pointer: fine) and (not (any-pointer: coarse)) {
+  /* optional fade; always pair with :focus-within */
+}
+```
+
+- Hit targets: keep `min-height` / `min-width` at `var(--tap)` (44px). Do not shrink icon buttons below that.
+- Do not rely on keyboard-only shortcuts as the sole way to do something.
+
+## Layout
+
+- Layouts must work on **wide desktop** and **tablet widths** (including landscape). Existing shell breakpoints: stack below 700px; two-column + bottom edge at 701–1100px (see `.home-shell` in `src/index.css`).
+- Use `100dvh` (not `100vh`) and `env(safe-area-inset-*)` for edges. Respect `--ui-scale` / `useUiScale`; do not assume a 1:1 CSS pixel viewport.
+- Avoid overflow traps: side rails, cards, and modals must scroll inside their pane (`min-height: 0` on grid children) instead of clipping content off a tablet screen.
+
+## Checklist before finishing UI work
+
+- Can every new action be completed with a finger, with no hover?
+- Does the layout remain usable around 800–1100px wide (typical tablet landscape)?
+- Are new buttons/chips at least `--tap` in both axes?

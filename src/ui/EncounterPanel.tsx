@@ -1,11 +1,24 @@
+import { battlemapTitleForMedia, isPlayerCard } from "../host/encounter";
 import { useHost } from "../host/HostContext";
 import { cardImageUrl } from "../lib/defaultToken";
+
+/** Roster chips: name and remove only. Current HP is edited on the battlefield. */
 
 export function EncounterAmbient() {
   const { store, snap } = useHost();
   const participants = snap.encounter?.participants ?? [];
   const mapId = snap.encounter?.mapMediaId ?? null;
   const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
+  const mapTitle = battlemapTitleForMedia(snap.entities, mapId) ?? "Map";
+  const empty = mapId === null && participants.length === 0;
+  const canClear =
+    mapId !== null ||
+    (snap.encounter?.tokens.length ?? 0) > 0 ||
+    snap.encounter?.live === true ||
+    participants.some((participant) => {
+      const owner = snap.entities.find((item) => item.id === participant.entityId);
+      return owner === undefined || !isPlayerCard(owner);
+    });
   return (
     <div className="encounter-define">
       <div
@@ -13,28 +26,26 @@ export function EncounterAmbient() {
         data-encounter-drop="true"
         aria-label="Encounter roster"
       >
-        {mapId ? (
-          <div className="encounter-chip encounter-map-chip">
-            {mapUrl ? <img className="encounter-map-thumb" src={mapUrl} alt="" /> : null}
-            <span>Map</span>
-            <button
-              type="button"
-              className="tiny"
-              aria-label="Remove encounter map"
-              onClick={() => store.run(store.setEncounterMap(null))}
-            >
-              ×
-            </button>
-          </div>
-        ) : null}
-        {participants.length === 0 ? (
+        {empty ? (
           <p className="muted encounter-hint">
-            {mapId === null
-              ? "Add or drag cards here. Battlemap or image cards set the map."
-              : "Add or drag cards here. The same card can go in more than once."}
+            Add or drag cards here. Battlemap or image cards set the map.
           </p>
         ) : (
           <ol className="encounter-chips">
+            {mapId ? (
+              <li className="encounter-chip encounter-map-chip">
+                {mapUrl ? <img className="encounter-map-thumb" src={mapUrl} alt="" /> : null}
+                <span>{mapTitle}</span>
+                <button
+                  type="button"
+                  className="tiny"
+                  aria-label={`Remove ${mapTitle}`}
+                  onClick={() => store.run(store.setEncounterMap(null))}
+                >
+                  ×
+                </button>
+              </li>
+            ) : null}
             {participants.map((participant) => {
               const owner = snap.entities.find((item) => item.id === participant.entityId);
               const art = owner ? cardImageUrl(owner, snap.mediaUrls) : null;
@@ -59,8 +70,15 @@ export function EncounterAmbient() {
       <div className="encounter-define-actions">
         <button
           type="button"
-          disabled={participants.length === 0}
-          onClick={() => store.run(store.endEncounter())}
+          disabled={participants.length === 0 && mapId === null}
+          onClick={() => store.run(store.addEncounterAsCard())}
+        >
+          Add as card
+        </button>
+        <button
+          type="button"
+          disabled={!canClear}
+          onClick={() => store.run(store.clearEncounter())}
         >
           Clear
         </button>

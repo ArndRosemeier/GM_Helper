@@ -33,6 +33,18 @@ function entityText(entity: Entity): string {
         break;
       case "media":
         break;
+      case "encounter":
+        for (const participant of block.participants) {
+          parts.push(participant.label);
+        }
+        break;
+      case "combat":
+        parts.push(String(block.maxHp));
+        if (block.currentHp !== null) {
+          parts.push(String(block.currentHp));
+        }
+        parts.push(String(block.initiativeBonus));
+        break;
     }
   }
   return parts.join(" ");

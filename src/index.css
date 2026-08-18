@@ -533,6 +533,26 @@ h3 {
   min-height: 6rem;
 }
 
+.combat-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 12rem));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.combat-stats label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--brass);
+  font-size: 0.8rem;
+}
+
+.combat-stats input {
+  width: 100%;
+  min-width: 0;
+}
+
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -960,6 +980,48 @@ h3 {
   margin: 0 0 10px;
 }
 
+.battlefield-card-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: rgba(10, 8, 6, 0.72);
+  overflow: auto;
+}
+
+.battlefield-card-modal-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 60vw;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.battlefield-card-modal-close {
+  align-self: flex-end;
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  border-radius: 50%;
+}
+
+.battlefield-card-modal-card .entity-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 .name-card-modal {
   position: fixed;
   inset: 0;
@@ -1032,8 +1094,9 @@ h3 {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: center;
+  align-items: stretch;
   flex: 0 0 auto;
+  min-height: calc(var(--tap) * 3 + 36px);
   background: var(--bg-raise);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1043,11 +1106,14 @@ h3 {
 
 .now-session {
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .encounter-define {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 10px;
   flex: 1;
   min-width: 0;
@@ -1056,14 +1122,16 @@ h3 {
 .encounter-roster {
   flex: 1;
   min-width: 0;
-  min-height: var(--tap);
+  min-height: calc(var(--tap) * 3);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  align-content: flex-start;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 4px 8px;
   border: 1px dashed var(--line);
   border-radius: 12px;
-  overflow-x: auto;
+  overflow: auto;
 }
 
 .encounter-roster.is-hot,
@@ -1074,15 +1142,23 @@ body.is-card-dragging .encounter-roster {
 
 .encounter-hint {
   margin: 0;
-  white-space: nowrap;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
 }
 
 .encounter-chips {
   display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
   gap: 6px;
   list-style: none;
   margin: 0;
   padding: 0;
+  width: 100%;
+  min-width: 0;
 }
 
 .encounter-chip {
@@ -1122,8 +1198,10 @@ body.is-card-dragging .encounter-roster {
 
 .encounter-define-actions {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   flex: 0 0 auto;
+  justify-content: center;
 }
 
 .encounter-detail-actions {
@@ -1200,9 +1278,12 @@ body.is-card-dragging .encounter-roster {
 }
 
 .table-surface {
+  --board-stone: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='d' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.46  0 0 0 0 0.45  0 0 0 0 0.43  0 0 0 0.34 0'/%3E%3C/filter%3E%3Crect width='256' height='256' fill='%236e6b66'/%3E%3Crect width='256' height='256' filter='url(%23d)'/%3E%3C/svg%3E");
   position: relative;
   height: 100%;
-  background: #0b0907;
+  background-color: #6e6b66;
+  background-image: var(--board-stone);
+  background-size: 256px 256px;
   overflow: hidden;
 }
 
@@ -1212,6 +1293,9 @@ body.is-card-dragging .encounter-roster {
   overflow: hidden;
   touch-action: none;
   cursor: grab;
+  background-color: #6e6b66;
+  background-image: var(--board-stone);
+  background-repeat: repeat;
 }
 
 .board-viewport:active {
@@ -1219,19 +1303,24 @@ body.is-card-dragging .encounter-roster {
 }
 
 .board {
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 0;
   width: 100%;
   height: 100%;
+  overflow: visible;
   transform-origin: 0 0;
   will-change: transform;
   user-select: none;
-  background-color: #2a241c;
 }
 
-.board.is-bare {
-  background-color: #c8c4bb;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='d' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.55  0 0 0 0 0.50  0 0 0 0 0.42  0 0 0 0.28 0'/%3E%3C/filter%3E%3Crect width='256' height='256' fill='%23c8c4bb'/%3E%3Crect width='256' height='256' filter='url(%23d)'/%3E%3C/svg%3E");
-  background-size: 256px 256px;
+.board-map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
 }
 
 .board-scales {
@@ -1363,22 +1452,49 @@ body.is-card-dragging .encounter-roster {
   z-index: 5;
   transform: translateY(-50%);
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 6px;
   pointer-events: auto;
+  opacity: 0.5;
+}
+
+.token-float-buttons {
+  display: grid;
+  grid-template-columns: var(--token-ctrl-size) var(--token-ctrl-size);
+  grid-auto-rows: var(--token-ctrl-size);
+  gap: calc(var(--token-ctrl-size) * 0.09);
+}
+
+.token-hp-meter {
+  width: calc(var(--token-ctrl-size) * 0.32);
+  min-width: calc(var(--token-ctrl-size) * 0.32);
+  border-radius: 999px;
+  border: 2px solid #111;
+  background: #1a1208;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.token-hp-meter-fill {
+  width: 100%;
+  background: #2f9e44;
 }
 
 .token-float-controls button {
-  width: var(--tap);
-  height: var(--tap);
-  min-width: var(--tap);
-  min-height: var(--tap);
+  width: var(--token-ctrl-size);
+  height: var(--token-ctrl-size);
+  min-width: var(--token-ctrl-size);
+  min-height: var(--token-ctrl-size);
   padding: 0;
   border-radius: 50%;
   border: 2px solid #111;
   background: #f7f3ea;
   color: #111;
-  font-size: 16px;
+  font-size: calc(var(--token-ctrl-size) * 0.36);
   line-height: 1;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
   cursor: pointer;
@@ -1482,18 +1598,21 @@ body.is-card-dragging .encounter-roster {
 
 .grid {
   position: absolute;
-  inset: 0;
+  /* 4px white / 2px black strokes sit on the cell edge, not inside it */
+  background-position: -2px -2px;
   background-image:
     linear-gradient(to right, transparent 1px, #000 1px, #000 3px, transparent 3px),
     linear-gradient(to bottom, transparent 1px, #000 1px, #000 3px, transparent 3px),
     linear-gradient(to right, #fff 4px, transparent 4px),
     linear-gradient(to bottom, #fff 4px, transparent 4px);
+  opacity: 0.5;
   pointer-events: none;
 }
 
 .token {
   position: absolute;
-  transform: translate(-50%, -50%);
+  width: var(--token-art-size);
+  transform: translate(-50%, calc(var(--token-art-size) * -0.5));
   display: flex;
   flex-direction: column;
   align-items: center;

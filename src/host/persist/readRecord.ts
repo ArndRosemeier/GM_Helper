@@ -12,17 +12,20 @@ import {
   asTrackId,
 } from "../ids";
 import { parseAppSettings, type AppSettings } from "../settings";
+import { syncCombatStatsForCategory } from "../runCard";
 import {
   emptyBattleground,
   GRID_SIZE_DEFAULT,
   GRID_SIZE_MAX,
   GRID_SIZE_MIN,
   TOKEN_SIZE_DEFAULT,
+  TOKEN_SIZE_MIN,
   TOKEN_SCALE_MIN,
   nowIso,
   type Battleground,
   type BattlegroundToken,
   type Campaign,
+  type EncounterBoard,
   type EncounterParticipant,
   type EncounterState,
   type Entity,
@@ -47,7 +50,7 @@ import type { MigrationWarning } from "./warnings";
 const SOURCE_KINDS: ReadonlyArray<SourceKind> = ["pdf", "markdown", "html", "image", "manual"];
 const MEDIA_ROLES: ReadonlyArray<MediaRole> = ["portrait", "token", "map", "other"];
 const LIFECYCLES: ReadonlyArray<EntityLifecycle> = ["ephemeral", "recurring"];
-const BLOCK_KINDS = ["text", "facts", "tracks", "secret", "media", "provenance"] as const;
+const BLOCK_KINDS = ["text", "facts", "tracks", "secret", "media", "provenance", "encounter", "combat"] as const;
 
 export function readStored<T>(
   rows: ReadonlyArray<unknown>,
@@ -287,23 +290,34 @@ export function readEncounter(value: unknown, warnings: MigrationWarning[]): Enc
   if (sessionId === null) {
     return null;
   }
+  return {
+    sessionId: asSessionId(sessionId),
+    ...readEncounterBoard(record, sessionId, warnings, "encounters"),
+  };
+}
+
+export function readEncounterBoard(
+  record: Record<string, unknown>,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "encounters" | "entities",
+): EncounterBoard {
   const activeIndex = record.activeIndex;
-  const participants = readParticipants(record.participants, sessionId, warnings);
+  const participants = readParticipants(record.participants, ownerId, warnings, store);
   const index = typeof activeIndex === "number" && Number.isInteger(activeIndex) ? activeIndex : 0;
   const mapMediaId = record.mapMediaId;
   const board = emptyBattleground();
   return {
-    sessionId: asSessionId(sessionId),
     participants,
     activeIndex: participants.length === 0 ? 0 : Math.min(Math.max(0, index), participants.length - 1),
     mapMediaId: typeof mapMediaId === "string" ? asMediaId(mapMediaId) : null,
     live: record.live === true,
-    tokens: readTokens(record.tokens, sessionId, warnings, "encounters"),
+    tokens: readTokens(record.tokens, ownerId, warnings, store),
     gridSize:
       record.gridSize === undefined
         ? board.gridSize
-        : readGridSize(record.gridSize, sessionId, warnings),
-    tokenSize: readTokenSize(record.tokenSize, record.gridSize, sessionId, warnings),
+        : readGridSize(record.gridSize, ownerId, warnings),
+    tokenSize: readTokenSize(record.tokenSize, record.gridSize, ownerId, warnings),
   };
 }
 
@@ -343,12 +357,12 @@ function readRunCard(value: unknown, entityId: string, warnings: MigrationWarnin
   } else if (categoryRaw !== undefined) {
     warnings.push({ store: "entities", id: entityId, message: "runCard.category was not a string and was cleared" });
   }
-  return {
+  return syncCombatStatsForCategory({
     title: readString(record, "title", "entities", entityId, warnings) ?? "Untitled",
     tags: tagList,
     category,
     blocks: readBlocks(record.blocks, entityId, warnings),
-  };
+  });
 }
 
 function readBlocks(value: unknown, entityId: string, warnings: MigrationWarning[]): RunCardBlock[] {
@@ -410,6 +424,23 @@ function readBlock(value: unknown, entityId: string, warnings: MigrationWarning[
         page: typeof page === "number" ? page : null,
         url: typeof url === "string" ? url : null,
         excerpt: typeof record.excerpt === "string" ? record.excerpt : "",
+      };
+    }
+    case "encounter":
+      return { kind: "encounter", ...readEncounterBoard(record, entityId, warnings, "entities") };
+    case "combat": {
+      const maxSource = record.maxHp !== undefined ? record.maxHp : record.hp;
+      const maxHp = readCombatInteger(maxSource, entityId, "maxHp", warnings);
+      const currentRaw = record.currentHp;
+      const currentHp =
+        currentRaw === undefined || currentRaw === null
+          ? null
+          : readCombatInteger(currentRaw, entityId, "currentHp", warnings);
+      return {
+        kind: "combat",
+        maxHp,
+        currentHp,
+        initiativeBonus: readCombatInteger(record.initiativeBonus, entityId, "initiativeBonus", warnings),
       };
     }
     default: {
@@ -508,12 +539,12 @@ function readTokenSize(
 ): number {
   if (value === undefined) {
     if (typeof gridSize === "number" && Number.isInteger(gridSize)) {
-      return Math.min(GRID_SIZE_MAX, Math.max(GRID_SIZE_MIN, gridSize));
+      return Math.min(GRID_SIZE_MAX, Math.max(TOKEN_SIZE_MIN, gridSize));
     }
     return TOKEN_SIZE_DEFAULT;
   }
   if (typeof value === "number" && Number.isInteger(value)) {
-    return Math.min(GRID_SIZE_MAX, Math.max(GRID_SIZE_MIN, value));
+    return Math.min(GRID_SIZE_MAX, Math.max(TOKEN_SIZE_MIN, value));
   }
   warnings.push({ store: "scenes", id: sceneId, message: "tokenSize was not an integer; using default" });
   return TOKEN_SIZE_DEFAULT;
@@ -523,7 +554,7 @@ function readTokens(
   value: unknown,
   ownerId: string,
   warnings: MigrationWarning[],
-  store: "scenes" | "encounters",
+  store: "scenes" | "encounters" | "entities",
 ): BattlegroundToken[] {
   if (value === undefined) {
     return [];
@@ -584,26 +615,27 @@ function readTokens(
 
 function readParticipants(
   value: unknown,
-  sessionId: string,
+  ownerId: string,
   warnings: MigrationWarning[],
+  store: "encounters" | "entities" = "encounters",
 ): EncounterParticipant[] {
   if (!Array.isArray(value)) {
     if (value !== undefined) {
-      warnings.push({ store: "encounters", id: sessionId, message: "participants was not a list" });
+      warnings.push({ store, id: ownerId, message: "participants was not a list" });
     }
     return [];
   }
   const participants: EncounterParticipant[] = [];
   for (const item of value) {
     if (typeof item !== "object" || item === null) {
-      warnings.push({ store: "encounters", id: sessionId, message: "A participant was not an object and was dropped" });
+      warnings.push({ store, id: ownerId, message: "A participant was not an object and was dropped" });
       continue;
     }
     const record = item as Record<string, unknown>;
     const id = typeof record.id === "string" ? record.id : null;
     const entityId = typeof record.entityId === "string" ? record.entityId : null;
     if (id === null || entityId === null) {
-      warnings.push({ store: "encounters", id: sessionId, message: "A participant was missing ids and was dropped" });
+      warnings.push({ store, id: ownerId, message: "A participant was missing ids and was dropped" });
       continue;
     }
     const conditions: string[] = [];
@@ -618,8 +650,9 @@ function readParticipants(
       id: asParticipantId(id),
       entityId: asEntityId(entityId),
       label: typeof record.label === "string" ? record.label : "Participant",
-      tracks: readTracks(record.tracks, sessionId, warnings),
+      tracks: readTracks(record.tracks, ownerId, warnings),
       conditions,
+      currentHp: readOptionalCombatInteger(record.currentHp, ownerId, warnings, store),
     });
   }
   return participants;
@@ -743,4 +776,41 @@ function isLifecycle(value: unknown): value is EntityLifecycle {
 
 function isBlockKind(value: unknown): value is (typeof BLOCK_KINDS)[number] {
   return typeof value === "string" && BLOCK_KINDS.some((item) => item === value);
+}
+
+function readCombatInteger(
+  value: unknown,
+  entityId: string,
+  field: "maxHp" | "currentHp" | "initiativeBonus",
+  warnings: MigrationWarning[],
+): number {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+  warnings.push({
+    store: "entities",
+    id: entityId,
+    message: `combat.${field} was not a whole number and was set to 0`,
+  });
+  return 0;
+}
+
+function readOptionalCombatInteger(
+  value: unknown,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "encounters" | "entities",
+): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+  warnings.push({
+    store,
+    id: ownerId,
+    message: "participant.currentHp was not a whole number and was cleared",
+  });
+  return null;
 }

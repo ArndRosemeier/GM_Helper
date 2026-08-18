@@ -2,6 +2,8 @@ import type { AppSettings } from "../settings";
 import { DEFAULT_SETTINGS, parseAppSettings } from "../settings";
 import { asCampaignId, asEntityId, asMediaId, asSessionId, type CampaignId, type EntityId } from "../ids";
 import type { Campaign, EncounterState, MediaRecord, Session, Source } from "../types";
+import { withEncounterCategory } from "../types";
+import { fillParticipantCurrentHp, withFilledEncounterCardHp } from "../encounter";
 import {
   ARCHIVE_FORMAT,
   CARD_ARCHIVE_FORMAT,
@@ -172,12 +174,15 @@ export function migrateArchivePayload(
   const record = dataValue as Record<string, unknown>;
   const warnings: MigrationWarning[] = [];
 
-  const campaigns = readList(record.campaigns, readCampaign, warnings);
+  const campaigns = readList(record.campaigns, readCampaign, warnings).map((campaign) => ({
+    ...campaign,
+    cardCategories: withEncounterCategory(campaign.cardCategories),
+  }));
   if (campaigns.length === 0) {
     throw new Error("Archive has no readable campaigns");
   }
 
-  const entities = readList(record.entities, readEntity, warnings);
+  const entities = withFilledEncounterCardHp(readList(record.entities, readEntity, warnings));
   const sessions = readList(record.sessions, readSession, warnings);
   const scenes = readList(record.scenes, readScene, warnings);
   const chunks = readList(record.chunks, readChunk, warnings);
@@ -185,7 +190,10 @@ export function migrateArchivePayload(
   const encounters = foldScenesIntoEncounters(
     scenes,
     readEncounterList(record.encounters, warnings),
-  );
+  ).map((item) => ({
+    ...fillParticipantCurrentHp(item, entities),
+    sessionId: item.sessionId,
+  }));
 
   const sourceMetas = readArchiveSources(record.sources, warnings);
   const sources: Source[] = [];

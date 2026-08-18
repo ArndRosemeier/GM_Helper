@@ -147,14 +147,14 @@ function readPageObject(page: PDFPageProxy, objectName: string): Promise<unknown
 
 async function rasterToPng(image: unknown): Promise<Blob> {
   if (typeof ImageBitmap !== "undefined" && image instanceof ImageBitmap) {
-    return bitmapToPng(image);
+    return drawableToPng(image, image.width, image.height);
   }
   if (typeof image !== "object" || image === null) {
     throw new Error("PDF image payload is not a bitmap");
   }
   const record = image as Record<string, unknown>;
   if (typeof ImageBitmap !== "undefined" && record.bitmap instanceof ImageBitmap) {
-    return bitmapToPng(record.bitmap);
+    return drawableToPng(record.bitmap, record.bitmap.width, record.bitmap.height);
   }
   const width = typeof record.width === "number" ? record.width : null;
   const height = typeof record.height === "number" ? record.height : null;
@@ -162,16 +162,16 @@ async function rasterToPng(image: unknown): Promise<Blob> {
   if (width === null || height === null || !(data instanceof Uint8ClampedArray || data instanceof Uint8Array)) {
     throw new Error("PDF image payload has no pixel buffer");
   }
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
+  const pixels = document.createElement("canvas");
+  pixels.width = width;
+  pixels.height = height;
+  const pixelCtx = pixels.getContext("2d");
+  if (!pixelCtx) {
     throw new Error("Could not open a 2D canvas for the PDF image");
   }
   const rgba = toRgbaBytes(data, width, height, typeof record.kind === "number" ? record.kind : null);
-  ctx.putImageData(new ImageData(rgba, width, height), 0, 0);
-  return canvasToPng(canvas);
+  pixelCtx.putImageData(new ImageData(rgba, width, height), 0, 0);
+  return drawableToPng(pixels, width, height);
 }
 
 function toRgbaBytes(
@@ -211,15 +211,23 @@ function toRgbaBytes(
   throw new Error("PDF image pixel buffer size does not match width and height");
 }
 
-async function bitmapToPng(bitmap: ImageBitmap): Promise<Blob> {
+async function drawableToPng(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+): Promise<Blob> {
   const canvas = document.createElement("canvas");
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     throw new Error("Could not open a 2D canvas for the PDF image");
   }
-  ctx.drawImage(bitmap, 0, 0);
+  // pdf.js paints XObjects with scale(1, -1). Raw objs bitmaps are therefore
+  // mirrored across the x-axis relative to the page.
+  ctx.translate(0, height);
+  ctx.scale(1, -1);
+  ctx.drawImage(source, 0, 0);
   return canvasToPng(canvas);
 }
 

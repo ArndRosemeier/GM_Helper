@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { cardOriginal, cardTypeLabel } from "../host/cardModel";
+import { combatHpForParticipant, isEncounterCard } from "../host/encounter";
 import { useHost } from "../host/HostContext";
 import { asSessionId } from "../host/ids";
 import type { FocusCardProps } from "../host/features/types";
-import type { TrackId } from "../host/ids";
+import type { ParticipantId, TrackId } from "../host/ids";
 import type { Entity, Source } from "../host/types";
 import { useCardEncounterDrag } from "./useCardEncounterDrag";
 import {
+  combatStatsFrom,
   factsFrom,
   mediaBlocksFrom,
   secretsFrom,
@@ -15,6 +17,7 @@ import {
   tracksFrom,
 } from "../host/runCard";
 import { clipboardReadSupported, readClipboardImage } from "../lib/clipboardImage";
+import { isIntegerDraft, parseIntegerField } from "../lib/integerField";
 import { saveBlobAsFile } from "../lib/saveBlob";
 import { CardPdfReader } from "./CardPdfReader";
 import { CardUrlFrame } from "./CardUrlFrame";
@@ -26,9 +29,11 @@ export function EntityCard({
   revealSecrets,
   expanded: expandedProp,
   onToggleExpand,
+  inspectParticipantId,
 }: FocusCardProps & {
   expanded?: boolean;
   onToggleExpand?: () => void;
+  inspectParticipantId?: ParticipantId;
 }) {
   const { store, snap } = useHost();
   const facts = factsFrom(entity.runCard);
@@ -36,6 +41,20 @@ export function EntityCard({
   const secrets = secretsFrom(entity.runCard);
   const text = textFrom(entity.runCard);
   const pictures = mediaBlocksFrom(entity.runCard);
+  const combat = combatStatsFrom(entity.runCard);
+  const inspectParticipant =
+    inspectParticipantId === undefined
+      ? undefined
+      : snap.tableEncounter?.participants.find((item) => item.id === inspectParticipantId);
+  const inspectHp =
+    inspectParticipant === undefined
+      ? null
+      : combatHpForParticipant(inspectParticipant, entity);
+  const displayedCurrentHp = inspectHp !== null ? inspectHp.currentHp : (combat?.currentHp ?? null);
+  const hasCombatStats = combat !== null;
+  const combatMaxHp = combat?.maxHp;
+  const combatCurrentHp = displayedCurrentHp;
+  const combatInitiative = combat?.initiativeBonus;
   const original = cardOriginal(entity, snap.sources);
   const controlled = expandedProp !== undefined;
   const [expandedLocal, setExpandedLocal] = useState(entity.id === snap.openedEntityId);
@@ -43,6 +62,13 @@ export function EntityCard({
   const [secretOpen, setSecretOpen] = useState(revealSecrets);
   const [titleDraft, setTitleDraft] = useState(entity.runCard.title);
   const [textDraft, setTextDraft] = useState(text);
+  const [maxHpDraft, setMaxHpDraft] = useState(combat === null ? "" : String(combat.maxHp));
+  const [currentHpDraft, setCurrentHpDraft] = useState(
+    displayedCurrentHp === null ? "" : String(displayedCurrentHp),
+  );
+  const [initiativeDraft, setInitiativeDraft] = useState(
+    combat === null ? "" : String(combat.initiativeBonus),
+  );
   const [grabbing, setGrabbing] = useState(false);
   const [deletingCard, setDeletingCard] = useState(false);
   const tokenUrl = cardImageUrl(entity, snap.mediaUrls);
@@ -52,6 +78,7 @@ export function EntityCard({
   const drag = useCardEncounterDrag(entity.id, entity.runCard.title);
   const canGrab = cardHasGrabSource(entity, snap.sources);
   const clipboardImageSupported = clipboardReadSupported();
+  const encounterCard = isEncounterCard(entity);
 
   useEffect(() => {
     if (controlled) {
@@ -70,15 +97,64 @@ export function EntityCard({
     setTextDraft(text);
   }, [text]);
 
+  useEffect(() => {
+    if (!hasCombatStats || combatMaxHp === undefined || combatInitiative === undefined) {
+      setMaxHpDraft("");
+      setCurrentHpDraft("");
+      setInitiativeDraft("");
+      return;
+    }
+    setMaxHpDraft(String(combatMaxHp));
+    setCurrentHpDraft(displayedCurrentHp === null ? "" : String(displayedCurrentHp));
+    setInitiativeDraft(String(combatInitiative));
+  }, [hasCombatStats, combatMaxHp, combatCurrentHp, displayedCurrentHp, combatInitiative]);
+
+  const commitCombatStats = (): void => {
+    if (combat === null) {
+      return;
+    }
+    const maxHp = parseIntegerField(maxHpDraft);
+    const initiativeBonus = parseIntegerField(initiativeDraft);
+    const currentHp =
+      inspectHp !== null
+        ? combat.currentHp
+        : combat.currentHp === null
+          ? null
+          : parseIntegerField(currentHpDraft);
+    if (
+      maxHp === null ||
+      initiativeBonus === null ||
+      (inspectHp === null && combat.currentHp !== null && currentHp === null)
+    ) {
+      setMaxHpDraft(String(combat.maxHp));
+      setCurrentHpDraft(displayedCurrentHp === null ? "" : String(displayedCurrentHp));
+      setInitiativeDraft(String(combat.initiativeBonus));
+      return;
+    }
+    store.run(store.setEntityCombatStats(entity.id, maxHp, currentHp, initiativeBonus));
+  };
+
+  const commitInspectCurrentHp = (): void => {
+    if (inspectParticipantId === undefined || inspectHp === null) {
+      return;
+    }
+    const currentHp = parseIntegerField(currentHpDraft);
+    if (currentHp === null) {
+      setCurrentHpDraft(String(inspectHp.currentHp));
+      return;
+    }
+    store.run(store.setParticipantCurrentHp(inspectParticipantId, currentHp));
+  };
+
   return (
     <article
-      className={`card entity-card focus-card${expanded ? "" : " compact"}${focused ? " is-focus" : ""}`}
+      className={`card entity-card focus-card${expanded && !encounterCard ? "" : " compact"}${focused ? " is-focus" : ""}`}
     >
       <div className="focus-header">
         {tokenUrl ? (
           <img className="card-token" src={tokenUrl} alt="" />
         ) : null}
-        {snap.session ? (
+        {snap.session && snap.surface !== "table" && !encounterCard ? (
           <button
             type="button"
             className="card-drag-handle"
@@ -92,17 +168,21 @@ export function EntityCard({
         <button
           type="button"
           className="focus-toggle"
-          aria-expanded={expanded}
+          aria-expanded={encounterCard ? undefined : expanded}
           onPointerDown={(event) => {
             // Mouse/pen: drag from the title like before. Touch keeps scrolling;
             // use the handle there.
-            if (!snap.session || event.pointerType === "touch") {
+            if (!snap.session || snap.surface === "table" || encounterCard || event.pointerType === "touch") {
               return;
             }
             drag.onPointerDown(event);
           }}
           onClick={() => {
             if (drag.consumeClick()) {
+              return;
+            }
+            if (encounterCard) {
+              store.run(store.openEncounterCard(entity.id));
               return;
             }
             store.setFocus(entity.id);
@@ -118,6 +198,18 @@ export function EntityCard({
             <h1 className="focus-title">{entity.runCard.title}</h1>
           </div>
         </button>
+        {encounterCard ? (
+          <button
+            type="button"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              setDeletingCard(true);
+            }}
+          >
+            Delete
+          </button>
+        ) : null}
         <label className="card-session">
           <span className="visually-hidden">Campaign</span>
           <select
@@ -173,7 +265,7 @@ export function EntityCard({
           </select>
         </label>
       </div>
-      {expanded ? (
+      {expanded && !encounterCard ? (
         <div className="entity-card-body">
           <form
             className="inline-form"
@@ -250,6 +342,60 @@ export function EntityCard({
               Delete
             </button>
           </form>
+          {combat !== null ? (
+            <div className="combat-stats">
+              <label>
+                Max HP
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={maxHpDraft}
+                  aria-label={`Max HP for ${entity.runCard.title}`}
+                  onChange={(event) => {
+                    if (isIntegerDraft(event.target.value)) {
+                      setMaxHpDraft(event.target.value);
+                    }
+                  }}
+                  onBlur={commitCombatStats}
+                />
+              </label>
+              {displayedCurrentHp !== null ? (
+                <label>
+                  Current HP
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={currentHpDraft}
+                    aria-label={`Current HP for ${entity.runCard.title}`}
+                    onChange={(event) => {
+                      if (isIntegerDraft(event.target.value)) {
+                        setCurrentHpDraft(event.target.value);
+                      }
+                    }}
+                    onBlur={inspectHp !== null ? commitInspectCurrentHp : commitCombatStats}
+                  />
+                </label>
+              ) : null}
+              <label>
+                Initiative bonus
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={initiativeDraft}
+                  aria-label={`Initiative bonus for ${entity.runCard.title}`}
+                  onChange={(event) => {
+                    if (isIntegerDraft(event.target.value)) {
+                      setInitiativeDraft(event.target.value);
+                    }
+                  }}
+                  onBlur={commitCombatStats}
+                />
+              </label>
+            </div>
+          ) : null}
           {isTextCard ? (
             <textarea
               className="card-text-editor"

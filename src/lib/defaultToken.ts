@@ -1,4 +1,5 @@
 import { firstMediaBlock } from "../host/runCard";
+import { encounterFromCard } from "../host/encounter";
 import type { Entity } from "../host/types";
 
 export function defaultTokenDataUrl(label: string, seed: string): string {
@@ -19,6 +20,10 @@ export function cardImageUrl(
   entity: Entity,
   mediaUrls: Readonly<Record<string, string>>,
 ): string | null {
+  const encounter = encounterFromCard(entity);
+  if (encounter?.mapMediaId) {
+    return mediaUrls[encounter.mapMediaId] ?? null;
+  }
   const block = firstMediaBlock(entity.runCard);
   if (!block) {
     return null;

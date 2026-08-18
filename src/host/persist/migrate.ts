@@ -1,4 +1,6 @@
 import type { CampaignExport } from "../types";
+import { withEncounterCategory } from "../types";
+import { fillParticipantCurrentHp, withFilledEncounterCardHp } from "../encounter";
 import type { GmDb } from "../store/db";
 import { SCHEMA_MIGRATIONS } from "./migrations";
 import {
@@ -53,21 +55,30 @@ export function migrateImportedCampaign(value: unknown): {
   if (!campaign) {
     throw new Error("Import has no readable campaign record");
   }
+  const migratedCampaign = {
+    ...campaign,
+    cardCategories: withEncounterCategory(campaign.cardCategories),
+  };
   const scenes = readList(record.scenes, readScene, warnings);
   const encounter = readEncounter(record.encounter, warnings);
   const folded = foldScenesIntoEncounters(scenes, encounter ? [encounter] : []);
+  const entities = withFilledEncounterCardHp(readList(record.entities, readEntity, warnings));
+  const encounters = folded.map((item) => ({
+    ...fillParticipantCurrentHp(item, entities),
+    sessionId: item.sessionId,
+  }));
   const payload: CampaignExport = {
     version: SCHEMA_VERSION,
-    campaign,
-    entities: readList(record.entities, readEntity, warnings),
+    campaign: migratedCampaign,
+    entities,
     sessions: readList(record.sessions, readSession, warnings),
     scenes: [],
     sources: readList(record.sources, readSource, warnings),
     chunks: readList(record.chunks, readChunk, warnings),
     logEntries: readList(record.logEntries, readLogEntry, warnings),
-    encounter: folded[0] ?? null,
+    encounter: encounters[0] ?? null,
   };
-  return { payload, encounters: folded, warnings };
+  return { payload, encounters, warnings };
 }
 
 export function migrationBanner(report: MigrationReport): string | null {

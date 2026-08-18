@@ -11,13 +11,19 @@ export type BoardView = {
 
 const START_VIEW: BoardView = { x: 0, y: 0, scale: 1 };
 
-export function zoomBoardView(view: BoardView, originX: number, originY: number, factor: number): BoardView {
+export function zoomBoardView(
+  view: BoardView,
+  originX: number,
+  originY: number,
+  factor: number,
+  layoutOrigin: { x: number; y: number } = { x: 0, y: 0 },
+): BoardView {
   const scale = clamp(view.scale * factor, BOARD_SCALE_MIN, BOARD_SCALE_MAX);
-  const worldX = (originX - view.x) / view.scale;
-  const worldY = (originY - view.y) / view.scale;
+  const worldX = (originX - view.x - layoutOrigin.x) / view.scale;
+  const worldY = (originY - view.y - layoutOrigin.y) / view.scale;
   return {
-    x: originX - worldX * scale,
-    y: originY - worldY * scale,
+    x: originX - layoutOrigin.x - worldX * scale,
+    y: originY - layoutOrigin.y - worldY * scale,
     scale,
   };
 }
@@ -26,7 +32,10 @@ export function panBoardView(view: BoardView, dx: number, dy: number): BoardView
   return { ...view, x: view.x + dx, y: view.y + dy };
 }
 
-export function useBoardPanZoom(viewportRef: RefObject<HTMLDivElement | null>): {
+export function useBoardPanZoom(
+  viewportRef: RefObject<HTMLDivElement | null>,
+  layoutOriginRef: RefObject<{ x: number; y: number }>,
+): {
   view: BoardView;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -45,13 +54,14 @@ export function useBoardPanZoom(viewportRef: RefObject<HTMLDivElement | null>): 
       event.preventDefault();
       const local = pointIn(node, event.clientX, event.clientY);
       const factor = event.ctrlKey ? Math.exp(-event.deltaY * 0.01) : event.deltaY < 0 ? 1.12 : 1 / 1.12;
-      setView((current) => zoomBoardView(current, local.x, local.y, factor));
+      const origin = layoutOriginRef.current;
+      setView((current) => zoomBoardView(current, local.x, local.y, factor, origin));
     };
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       node.removeEventListener("wheel", onWheel);
     };
-  }, [viewportRef]);
+  }, [viewportRef, layoutOriginRef]);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.pointerType === "mouse" && event.button !== 0) {
@@ -88,13 +98,16 @@ export function useBoardPanZoom(viewportRef: RefObject<HTMLDivElement | null>): 
       const nextMid = midpoint(firstAfter, secondAfter);
       const localPrev = pointIn(node, prevMid.x, prevMid.y);
       const localNext = pointIn(node, nextMid.x, nextMid.y);
+      const origin = layoutOriginRef.current;
       setView((current) => {
-        const zoomed = prevDist > 0 ? zoomBoardView(current, localPrev.x, localPrev.y, nextDist / prevDist) : current;
+        const zoomed =
+          prevDist > 0 ? zoomBoardView(current, localPrev.x, localPrev.y, nextDist / prevDist, origin) : current;
         return panBoardView(zoomed, localNext.x - localPrev.x, localNext.y - localPrev.y);
       });
       return;
     }
-    setView((current) => panBoardView(current, next.x - previous.x, next.y - previous.y));
+    const delta = clientDeltaToLocal(node, next.x - previous.x, next.y - previous.y);
+    setView((current) => panBoardView(current, delta.x, delta.y));
   };
 
   const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -111,7 +124,8 @@ export function useBoardPanZoom(viewportRef: RefObject<HTMLDivElement | null>): 
     }
     const originX = node.clientWidth / 2;
     const originY = node.clientHeight / 2;
-    setView((current) => zoomBoardView(current, originX, originY, factor));
+    const origin = layoutOriginRef.current;
+    setView((current) => zoomBoardView(current, originX, originY, factor, origin));
   };
 
   return { view, onPointerDown, onPointerMove, onPointerUp, zoomBy };
@@ -119,7 +133,24 @@ export function useBoardPanZoom(viewportRef: RefObject<HTMLDivElement | null>): 
 
 function pointIn(node: HTMLElement, clientX: number, clientY: number): { x: number; y: number } {
   const rect = node.getBoundingClientRect();
-  return { x: clientX - rect.left, y: clientY - rect.top };
+  if (!(rect.width > 0) || !(rect.height > 0)) {
+    throw new Error("Board viewport has no size");
+  }
+  return {
+    x: ((clientX - rect.left) / rect.width) * node.clientWidth,
+    y: ((clientY - rect.top) / rect.height) * node.clientHeight,
+  };
+}
+
+function clientDeltaToLocal(node: HTMLElement, dx: number, dy: number): { x: number; y: number } {
+  const rect = node.getBoundingClientRect();
+  if (!(rect.width > 0) || !(rect.height > 0)) {
+    throw new Error("Board viewport has no size");
+  }
+  return {
+    x: (dx / rect.width) * node.clientWidth,
+    y: (dy / rect.height) * node.clientHeight,
+  };
 }
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {

@@ -1,3 +1,4 @@
+import { emptyEncounter } from "../encounter";
 import type { EncounterState, Scene } from "../types";
 import { emptyBattleground } from "../types";
 import type { SessionId } from "../ids";
@@ -63,16 +64,4 @@ export function withBoardDefaults(encounter: EncounterState): EncounterState {
   };
 }
 
-export function emptyEncounter(sessionId: SessionId): EncounterState {
-  const board = emptyBattleground();
-  return {
-    sessionId,
-    participants: [],
-    activeIndex: 0,
-    mapMediaId: null,
-    live: false,
-    tokens: [],
-    gridSize: board.gridSize,
-    tokenSize: board.tokenSize,
-  };
-}
+export { emptyEncounter };

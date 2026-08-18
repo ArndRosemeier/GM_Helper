@@ -1,13 +1,16 @@
 import { newTrackId } from "./ids";
-import type {
-  FactItem,
-  MediaBlock,
-  ProvenanceBlock,
-  RunCard,
-  RunCardBlock,
-  SecretBlock,
-  Track,
-  TracksBlock,
+import {
+  NPC_CATEGORY,
+  PLAYER_CATEGORY,
+  type CombatStatsBlock,
+  type FactItem,
+  type MediaBlock,
+  type ProvenanceBlock,
+  type RunCard,
+  type RunCardBlock,
+  type SecretBlock,
+  type Track,
+  type TracksBlock,
 } from "./types";
 
 export function emptyRunCard(
@@ -19,7 +22,52 @@ export function emptyRunCard(
 }
 
 export function withCategory(card: RunCard, category: string): RunCard {
-  return { ...card, category };
+  return syncCombatStatsForCategory({ ...card, category });
+}
+
+export function emptyCombatStats(): CombatStatsBlock {
+  return { kind: "combat", maxHp: 0, currentHp: null, initiativeBonus: 0 };
+}
+
+export function combatStatsFrom(card: RunCard): CombatStatsBlock | null {
+  for (const block of card.blocks) {
+    if (block.kind === "combat") {
+      return block;
+    }
+  }
+  return null;
+}
+
+export function withCombatStats(card: RunCard, stats: CombatStatsBlock): RunCard {
+  const without = card.blocks.filter((block) => block.kind !== "combat");
+  return { ...card, blocks: [...without, stats] };
+}
+
+export function withoutCombatStats(card: RunCard): RunCard {
+  return { ...card, blocks: card.blocks.filter((block) => block.kind !== "combat") };
+}
+
+export function syncCombatStatsForCategory(card: RunCard): RunCard {
+  if (card.category === PLAYER_CATEGORY) {
+    const existing = combatStatsFrom(card);
+    const maxHp = existing?.maxHp ?? 0;
+    return withCombatStats(card, {
+      kind: "combat",
+      maxHp,
+      currentHp: existing?.currentHp ?? maxHp,
+      initiativeBonus: existing?.initiativeBonus ?? 0,
+    });
+  }
+  if (card.category === NPC_CATEGORY) {
+    const existing = combatStatsFrom(card);
+    return withCombatStats(card, {
+      kind: "combat",
+      maxHp: existing?.maxHp ?? 0,
+      currentHp: null,
+      initiativeBonus: existing?.initiativeBonus ?? 0,
+    });
+  }
+  return withoutCombatStats(card);
 }
 
 export function factsFrom(card: RunCard): ReadonlyArray<FactItem> {

@@ -15,6 +15,8 @@ import { foldScenesIntoEncounters } from "./foldScenes";
 import { SCHEMA_VERSION } from "./schema";
 import type { MigrationWarning } from "./warnings";
 import type { EncounterState, Scene } from "../types";
+import { withEncounterCategory } from "../types";
+import { fillParticipantCurrentHp, withFilledEncounterCardHp } from "../encounter";
 
 /**
  * One step in the document-schema chain.
@@ -96,6 +98,24 @@ export const SCHEMA_MIGRATIONS: ReadonlyArray<SchemaMigration> = [
     to: 10,
     reason: "Battleground tokens gain scale, shape, and color; entityId may be null for stamps.",
     apply: migrate9to10,
+  },
+  {
+    from: 10,
+    to: 11,
+    reason: "Encounter boards can live on cards; campaigns gain the Encounter category.",
+    apply: migrate10to11,
+  },
+  {
+    from: 11,
+    to: 12,
+    reason: "Player and NPC cards store HP and initiative bonus.",
+    apply: migrate11to12,
+  },
+  {
+    from: 12,
+    to: 13,
+    reason: "HP splits into max and current; NPC current HP is per encounter instance.",
+    apply: migrate12to13,
   },
 ];
 
@@ -313,6 +333,61 @@ async function migrate9to10(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> 
     if (next) {
       await db.put("scenes", next);
     }
+  }
+  return warnings;
+}
+
+async function migrate10to11(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("campaigns")) {
+    const next = readCampaign(raw, warnings);
+    if (!next) {
+      continue;
+    }
+    await db.put("campaigns", {
+      ...next,
+      cardCategories: withEncounterCategory(next.cardCategories),
+    });
+  }
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      await db.put("entities", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate11to12(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      await db.put("entities", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate12to13(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  const entities = [];
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      entities.push(next);
+    }
+  }
+  const filled = withFilledEncounterCardHp(entities);
+  for (const entity of filled) {
+    await db.put("entities", entity);
+  }
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (!next) {
+      continue;
+    }
+    await db.put("encounters", { ...fillParticipantCurrentHp(next, filled), sessionId: next.sessionId });
   }
   return warnings;
 }
