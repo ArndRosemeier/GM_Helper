@@ -147,12 +147,10 @@ export function TableSurface() {
       store.setError("Battleground board is not mounted");
       return;
     }
-    const rect = node.getBoundingClientRect();
-    const rawX = (event.clientX - rect.left) / rect.width;
-    const rawY = (event.clientY - rect.top) / rect.height;
+    const raw = clientPointOnBoard(node, event.clientX, event.clientY);
     const gridSize = snap.tableEncounter?.gridSize ?? null;
     if (gridSize === null) {
-      store.run(store.moveToken(tokenId, rawX, rawY));
+      store.run(store.moveToken(tokenId, raw.x, raw.y));
       return;
     }
     const token = tokens.find((item) => item.id === tokenId);
@@ -161,8 +159,8 @@ export function TableSurface() {
       return;
     }
     const snapped = snapPointToGrid(
-      rawX,
-      rawY,
+      raw.x,
+      raw.y,
       node.offsetWidth,
       node.offsetHeight,
       gridSize,
@@ -291,7 +289,20 @@ export function TableSurface() {
         </div>
       </div>
       {snap.session ? (
-        <BoardScaleControls compact onPickCard={() => setPickingCard(true)} />
+        <BoardScaleControls
+          compact
+          onPickCard={() => setPickingCard(true)}
+          onAddShape={(shape, color) => {
+            const viewportNode = viewport.current;
+            const boardNode = board.current;
+            if (!viewportNode || !boardNode) {
+              store.setError("Battleground board is not mounted");
+              return;
+            }
+            const at = viewportCenterOnBoard(viewportNode, boardNode);
+            store.run(store.addShapeToken(shape, color, at.x, at.y));
+          }}
+        />
       ) : null}
       <div className="table-corner-actions">
         <button
@@ -562,6 +573,29 @@ function isStampToken(token: BattlegroundToken): boolean {
   return token.shape === "circle" || token.shape === "square";
 }
 
+function clientPointOnBoard(
+  board: HTMLElement,
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } {
+  const rect = board.getBoundingClientRect();
+  if (!(rect.width > 0) || !(rect.height > 0)) {
+    throw new Error("Battleground board has no size");
+  }
+  return {
+    x: (clientX - rect.left) / rect.width,
+    y: (clientY - rect.top) / rect.height,
+  };
+}
+
+function viewportCenterOnBoard(viewport: HTMLElement, board: HTMLElement): { x: number; y: number } {
+  const viewRect = viewport.getBoundingClientRect();
+  if (!(viewRect.width > 0) || !(viewRect.height > 0)) {
+    throw new Error("Battleground viewport has no size");
+  }
+  return clientPointOnBoard(board, viewRect.left + viewRect.width / 2, viewRect.top + viewRect.height / 2);
+}
+
 function battlemapBoardLayout(
   viewport: { width: number; height: number } | null,
   map: { width: number; height: number } | null,
@@ -597,9 +631,11 @@ function containInBox(
 function BoardScaleControls({
   compact = false,
   onPickCard,
+  onAddShape,
 }: {
   compact?: boolean;
   onPickCard?: () => void;
+  onAddShape: (shape: "circle" | "square", color: string) => void;
 }) {
   const { store, snap } = useHost();
   const lastGrid = useRef(snap.tableEncounter?.gridSize ?? GRID_SIZE_DEFAULT);
@@ -659,14 +695,14 @@ function BoardScaleControls({
               className="board-stamp is-circle"
               style={{ background: color }}
               aria-label={`Add circle token ${color}`}
-              onClick={() => store.run(store.addShapeToken("circle", color))}
+              onClick={() => onAddShape("circle", color)}
             />
             <button
               type="button"
               className="board-stamp is-square"
               style={{ background: color }}
               aria-label={`Add square token ${color}`}
-              onClick={() => store.run(store.addShapeToken("square", color))}
+              onClick={() => onAddShape("square", color)}
             />
           </div>
         ))}

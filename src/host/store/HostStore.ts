@@ -1194,20 +1194,23 @@ export class HostStore {
     this.emit();
   }
 
-  async addShapeToken(shape: "circle" | "square", color: string): Promise<void> {
+  async addShapeToken(shape: "circle" | "square", color: string, x: number, y: number): Promise<void> {
     if (shape !== "circle" && shape !== "square") {
       this.setErrorAndThrow(`Unknown token shape: ${String(shape)}`);
     }
     if (!TOKEN_STAMP_COLORS.includes(color)) {
       this.setErrorAndThrow(`Unknown token color: ${color}`);
     }
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      this.setErrorAndThrow("Token position must be a finite board coordinate");
+    }
     const encounter = await this.ensureTargetEncounter();
     const token: BattlegroundToken = {
       id: newTokenId(),
       entityId: null,
       participantId: null,
-      x: 0.4 + Math.random() * 0.2,
-      y: 0.4 + Math.random() * 0.2,
+      x,
+      y,
       visible: true,
       label: "",
       scale: 1,
