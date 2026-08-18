@@ -10,6 +10,7 @@ import {
   newSessionId,
   newSourceId,
   newTokenId,
+  newVeilId,
   type CampaignId,
   type ChunkId,
   type EntityId,
@@ -19,6 +20,7 @@ import {
   type SourceId,
   type TokenId,
   type TrackId,
+  type VeilId,
 } from "../ids";
 import {
   nowIso,
@@ -29,6 +31,8 @@ import {
   TOKEN_SIZE_MIN,
   nextTokenScale,
   TOKEN_STAMP_COLORS,
+  VEIL_DEFAULT_CELLS,
+  VEIL_MIN_CELLS,
   tokenSizeFittingGrid,
   DEFAULT_CARD_CATEGORIES,
   DEFAULT_CAMPAIGN_GENRE,
@@ -38,6 +42,7 @@ import {
   categoryHasCombatStats,
   normalizeCampaignGenre,
   type BattlegroundToken,
+  type BattlegroundVeil,
   type BusyStatus,
   type Campaign,
   type EncounterBoard,
@@ -54,6 +59,7 @@ import {
   type SourceView,
   type Surface,
   type UrlView,
+  type VeilKind,
 } from "../types";
 import { migrateOpenDatabase, migrationBanner, SCHEMA_VERSION } from "../persist";
 import { migrateArchivePayload, migrateCardArchivePayload, parseAnyArchiveManifest, parseArchiveManifest } from "../persist/archiveMigrate";
@@ -73,7 +79,7 @@ import {
   withEncounterBlock,
   withParticipantHpOwnership,
 } from "../encounter";
-import { snapPointToGrid, tokenSpanCells } from "../gridSnap";
+import { snapBoxToGrid, snapPointToGrid, tokenSpanCells } from "../gridSnap";
 import { SCHEMA_META_KEY } from "../persist/schema";
 import {
   formatMigrationWarnings,
@@ -924,7 +930,7 @@ export class HostStore {
     });
     try {
       const { openPdfDocument } = await import("../../lib/pdfjsRuntime");
-      const { extractPdfPagesImages, shrinkPngHalf } = await import("../../lib/pdfImages");
+      const { extractPdfPagesImages, preparePdfImagesForChat } = await import("../../lib/pdfImages");
       const document = await openPdfDocument(await source.bytes.arrayBuffer());
       const pages = [pageNumber];
       if (pageNumber + 1 <= document.numPages) {
@@ -938,17 +944,14 @@ export class HostStore {
           .trim();
         return { page, text };
       });
-      let fullImages: ReadonlyArray<Blob> = [];
+      let chatImages: ReadonlyArray<{ original: Blob; chat: Blob }> = [];
       if (includeImages) {
         this.setBusy({
           title: "Adding a card with AI",
           detail: "Painting this page and the next so pictures can be read.",
         });
-        fullImages = await extractPdfPagesImages(document, pages);
-      }
-      const llmImages: Blob[] = [];
-      for (const png of fullImages) {
-        llmImages.push(await shrinkPngHalf(png));
+        const extracted = await extractPdfPagesImages(document, pages);
+        chatImages = await preparePdfImagesForChat(extracted);
       }
       this.setBusy({
         title: "Adding a card with AI",
@@ -961,17 +964,17 @@ export class HostStore {
         })
         .join("\n\n");
       const imageNote =
-        llmImages.length > 0
-          ? `You are also given ${String(llmImages.length)} images in order as image 0 through image ${String(llmImages.length - 1)}. selectedImageIndex is the index of the picture that best illustrates the topic, or null if they are all decorations or unrelated.`
+        chatImages.length > 0
+          ? `You are also given ${String(chatImages.length)} images in order as image 0 through image ${String(chatImages.length - 1)}. selectedImageIndex is the index of the picture that best illustrates the topic, or null if they are all decorations or unrelated.`
           : "No images were provided. selectedImageIndex must be null.";
       const userText = `Topic: ${topic}\n\n${textBlock}\n\n${imageNote}`;
       let userMessage: ChatMessage;
-      if (llmImages.length === 0) {
+      if (chatImages.length === 0) {
         userMessage = { role: "user", content: userText };
       } else {
         const parts: ChatContentPart[] = [{ type: "text", text: userText }];
-        for (const png of llmImages) {
-          parts.push({ type: "image_url", image_url: { url: await blobToDataUrl(png) } });
+        for (const image of chatImages) {
+          parts.push({ type: "image_url", image_url: { url: await blobToDataUrl(image.chat) } });
         }
         userMessage = { role: "user", content: parts };
       }
@@ -988,10 +991,10 @@ export class HostStore {
         },
         userMessage,
       ]);
-      const result = parseAiTopicCard(raw, fullImages.length);
+      const result = parseAiTopicCard(raw, chatImages.length);
       let card = withText(emptyRunCard(result.title), result.text);
       if (result.selectedImageIndex !== null) {
-        const picture = fullImages[result.selectedImageIndex];
+        const picture = chatImages[result.selectedImageIndex]?.original;
         if (!picture) {
           this.setErrorAndThrow(`AI card selected missing image ${String(result.selectedImageIndex)}`);
         }
@@ -1296,15 +1299,18 @@ export class HostStore {
     this.emit();
   }
 
-  async addToken(entityId: EntityId, visible: boolean): Promise<void> {
+  async addToken(entityId: EntityId, visible: boolean, at: { x: number; y: number } | null): Promise<void> {
     const encounter = await this.ensureTargetEncounter();
     const entity = this.requireEntity(entityId);
+    if (at !== null && (!Number.isFinite(at.x) || !Number.isFinite(at.y))) {
+      this.setErrorAndThrow("Token position must be a finite board coordinate");
+    }
     const token: BattlegroundToken = {
       id: newTokenId(),
       entityId,
       participantId: null,
-      x: 0.35 + Math.random() * 0.3,
-      y: 0.35 + Math.random() * 0.3,
+      x: at === null ? 0.35 + Math.random() * 0.3 : at.x,
+      y: at === null ? 0.35 + Math.random() * 0.3 : at.y,
       visible,
       label: entity.runCard.title,
       scale: 1,
@@ -1348,7 +1354,27 @@ export class HostStore {
     this.emit();
   }
 
-  async placeCardOnBattleground(entityId: EntityId): Promise<void> {
+  async addVeil(kind: VeilKind, x: number, y: number): Promise<void> {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      this.setErrorAndThrow("Veil position must be a finite board coordinate");
+    }
+    const encounter = await this.ensureTargetEncounter();
+    const veil: BattlegroundVeil = {
+      id: newVeilId(),
+      kind,
+      x,
+      y,
+      widthCells: VEIL_DEFAULT_CELLS,
+      heightCells: VEIL_DEFAULT_CELLS,
+    };
+    await this.putEncounter({
+      ...encounter,
+      veils: [...encounter.veils, veil],
+    });
+    this.emit();
+  }
+
+  async placeCardOnBattleground(entityId: EntityId, at: { x: number; y: number } | null): Promise<void> {
     const entity = this.requireEntity(entityId);
     if (isEncounterCard(entity)) {
       this.setErrorAndThrow("Encounter cards cannot be added to an encounter");
@@ -1363,7 +1389,7 @@ export class HostStore {
       this.emit();
       return;
     }
-    await this.addToken(entityId, true);
+    await this.addToken(entityId, true, at);
   }
 
   private async placeVisibleToken(entityId: EntityId): Promise<void> {
@@ -1382,7 +1408,7 @@ export class HostStore {
       this.emit();
       return;
     }
-    await this.addToken(entityId, true);
+    await this.addToken(entityId, true, null);
   }
 
   async moveToken(tokenId: TokenId, x: number, y: number): Promise<void> {
@@ -1419,10 +1445,26 @@ export class HostStore {
       changed = true;
       return { ...token, x: snapped.x, y: snapped.y };
     });
+    const veils = encounter.veils.map((veil) => {
+      const snapped = snapBoxToGrid(
+        veil.x,
+        veil.y,
+        boardWidth,
+        boardHeight,
+        gridSize,
+        veil.widthCells,
+        veil.heightCells,
+      );
+      if (snapped.x === veil.x && snapped.y === veil.y) {
+        return veil;
+      }
+      changed = true;
+      return { ...veil, x: snapped.x, y: snapped.y };
+    });
     if (!changed) {
       return;
     }
-    await this.putEncounter({ ...encounter, tokens });
+    await this.putEncounter({ ...encounter, tokens, veils });
     this.emit();
   }
 
@@ -1456,6 +1498,60 @@ export class HostStore {
       participants,
       activeIndex,
       tokens: encounter.tokens.filter((item) => item.id !== tokenId),
+    });
+    this.emit();
+  }
+
+  async moveVeil(veilId: VeilId, x: number, y: number): Promise<void> {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      this.setErrorAndThrow("Veil position must be a finite board coordinate");
+    }
+    const encounter = await this.ensureTargetEncounter();
+    await this.putEncounter({
+      ...encounter,
+      veils: this.mapEncounterVeil(encounter, veilId, (veil) => ({ ...veil, x, y })),
+    });
+    this.emit();
+  }
+
+  async resizeVeil(
+    veilId: VeilId,
+    x: number,
+    y: number,
+    widthCells: number,
+    heightCells: number,
+  ): Promise<void> {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      this.setErrorAndThrow("Veil position must be a finite board coordinate");
+    }
+    if (!Number.isInteger(widthCells) || widthCells < VEIL_MIN_CELLS) {
+      this.setErrorAndThrow(`Veil width must be an integer of at least ${String(VEIL_MIN_CELLS)} cells`);
+    }
+    if (!Number.isInteger(heightCells) || heightCells < VEIL_MIN_CELLS) {
+      this.setErrorAndThrow(`Veil height must be an integer of at least ${String(VEIL_MIN_CELLS)} cells`);
+    }
+    const encounter = await this.ensureTargetEncounter();
+    await this.putEncounter({
+      ...encounter,
+      veils: this.mapEncounterVeil(encounter, veilId, (veil) => ({
+        ...veil,
+        x,
+        y,
+        widthCells,
+        heightCells,
+      })),
+    });
+    this.emit();
+  }
+
+  async removeVeil(veilId: VeilId): Promise<void> {
+    const encounter = await this.ensureTargetEncounter();
+    if (!encounter.veils.some((veil) => veil.id === veilId)) {
+      this.setErrorAndThrow(`Encounter has no veil ${veilId}`);
+    }
+    await this.putEncounter({
+      ...encounter,
+      veils: encounter.veils.filter((veil) => veil.id !== veilId),
     });
     this.emit();
   }
@@ -1567,6 +1663,7 @@ export class HostStore {
           ? encounter.tokenSize
           : tokenSizeFittingGrid(encounter.gridSize),
       tokens: this.tokensFromRoster(encounter, encounter.participants, false),
+      veils: [],
     });
     this.emit();
   }
@@ -2458,6 +2555,25 @@ export class HostStore {
       this.setErrorAndThrow(`Encounter has no token ${tokenId}`);
     }
     return tokens;
+  }
+
+  private mapEncounterVeil(
+    encounter: EncounterState,
+    veilId: VeilId,
+    update: (veil: BattlegroundVeil) => BattlegroundVeil,
+  ): BattlegroundVeil[] {
+    let found = false;
+    const veils = encounter.veils.map((veil) => {
+      if (veil.id !== veilId) {
+        return veil;
+      }
+      found = true;
+      return update(veil);
+    });
+    if (!found) {
+      this.setErrorAndThrow(`Encounter has no veil ${veilId}`);
+    }
+    return veils;
   }
 
   private tokensFromRoster(

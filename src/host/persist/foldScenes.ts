@@ -44,6 +44,7 @@ export function foldScenesIntoEncounters(
       mapMediaId: null,
       live: false,
       tokens: board.tokens,
+      veils: [],
       gridSize: board.gridSize,
       tokenSize: board.tokenSize,
     });

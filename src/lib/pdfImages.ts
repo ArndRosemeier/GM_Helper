@@ -100,11 +100,80 @@ export async function extractPdfPagesImages(
   return pngs;
 }
 
-export async function shrinkPngHalf(blob: Blob): Promise<Blob> {
+export async function preparePdfImagesForChat(
+  images: ReadonlyArray<Blob>,
+): Promise<ReadonlyArray<{ original: Blob; chat: Blob }>> {
+  const MAX_EDGE = 768;
+  const MIN_EDGE = 48;
+  const MAX_COUNT = 8;
+  const MAX_BYTES = 1_000_000;
+  const ranked: Array<{ original: Blob; chat: Blob; area: number; order: number }> = [];
+  for (let order = 0; order < images.length; order += 1) {
+    const original = images[order];
+    if (!original) {
+      throw new Error(`PDF image ${String(order)} is missing from the extract list`);
+    }
+    const fitted = await fitRasterForChat(original, MAX_EDGE);
+    if (fitted.sourceMinEdge < MIN_EDGE) {
+      continue;
+    }
+    ranked.push({ original, chat: fitted.blob, area: fitted.sourceArea, order });
+  }
+  ranked.sort((left, right) => right.area - left.area || left.order - right.order);
+  const chosen = ranked.slice(0, MAX_COUNT).sort((left, right) => left.order - right.order);
+  let edge = MAX_EDGE;
+  let packed = chosen;
+  while (totalChatBytes(packed) > MAX_BYTES && edge > 256) {
+    edge = Math.floor(edge * 0.75);
+    const next: typeof packed = [];
+    for (const item of packed) {
+      const fitted = await fitRasterForChat(item.original, edge);
+      next.push({ ...item, chat: fitted.blob });
+    }
+    packed = next;
+  }
+  while (packed.length > 1 && totalChatBytes(packed) > MAX_BYTES) {
+    let smallest = 0;
+    for (let index = 1; index < packed.length; index += 1) {
+      const current = packed[index];
+      const min = packed[smallest];
+      if (!current || !min) {
+        throw new Error("Chat image list is missing an entry");
+      }
+      if (current.chat.size < min.chat.size) {
+        smallest = index;
+      }
+    }
+    packed = packed.filter((_, index) => index !== smallest);
+  }
+  if (totalChatBytes(packed) > MAX_BYTES) {
+    throw new Error(
+      `PDF pictures are still ${String(totalChatBytes(packed))} bytes after shrinking; too large for the chat request`,
+    );
+  }
+  return packed.map((item) => ({ original: item.original, chat: item.chat }));
+}
+
+function totalChatBytes(items: ReadonlyArray<{ chat: Blob }>): number {
+  let total = 0;
+  for (const item of items) {
+    total += item.chat.size;
+  }
+  return total;
+}
+
+async function fitRasterForChat(
+  blob: Blob,
+  maxEdge: number,
+): Promise<{ blob: Blob; sourceArea: number; sourceMinEdge: number }> {
+  if (!(maxEdge > 0)) {
+    throw new Error(`Chat image max edge must be positive, got ${String(maxEdge)}`);
+  }
   const bitmap = await createImageBitmap(blob);
   try {
-    const width = Math.max(1, Math.round(bitmap.width / 2));
-    const height = Math.max(1, Math.round(bitmap.height / 2));
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
@@ -112,13 +181,35 @@ export async function shrinkPngHalf(blob: Blob): Promise<Blob> {
     if (!ctx) {
       throw new Error("Could not open a 2D canvas to shrink the PDF image");
     }
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(bitmap, 0, 0, width, height);
-    return canvasToPng(canvas);
+    return {
+      blob: await canvasToJpeg(canvas, 0.72),
+      sourceArea: bitmap.width * bitmap.height,
+      sourceMinEdge: Math.min(bitmap.width, bitmap.height),
+    };
   } finally {
     bitmap.close();
   }
+}
+
+function canvasToJpeg(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Could not encode the PDF image as JPEG"));
+          return;
+        }
+        resolve(blob);
+      },
+      "image/jpeg",
+      quality,
+    );
+  });
 }
 
 export async function extractPdfImagePng(page: PDFPageProxy, objectName: string): Promise<Blob> {

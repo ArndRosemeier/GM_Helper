@@ -32,6 +32,16 @@ export function panBoardView(view: BoardView, dx: number, dy: number): BoardView
   return { ...view, x: view.x + dx, y: view.y + dy };
 }
 
+const PAN_THRESHOLD_PX = 8;
+
+type BoardPointer = {
+  x: number;
+  y: number;
+  originX: number;
+  originY: number;
+  panning: boolean;
+};
+
 export function useBoardPanZoom(
   viewportRef: RefObject<HTMLDivElement | null>,
   layoutOriginRef: RefObject<{ x: number; y: number }>,
@@ -43,7 +53,7 @@ export function useBoardPanZoom(
   zoomBy: (factor: number) => void;
 } {
   const [view, setView] = useState<BoardView>(START_VIEW);
-  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pointers = useRef(new Map<number, BoardPointer>());
 
   useEffect(() => {
     const node = viewportRef.current;
@@ -52,7 +62,7 @@ export function useBoardPanZoom(
     }
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault();
-      const local = pointIn(node, event.clientX, event.clientY);
+      const local = clientPointInViewport(node, event.clientX, event.clientY);
       const factor = event.ctrlKey ? Math.exp(-event.deltaY * 0.01) : event.deltaY < 0 ? 1.12 : 1 / 1.12;
       const origin = layoutOriginRef.current;
       setView((current) => zoomBoardView(current, local.x, local.y, factor, origin));
@@ -68,7 +78,13 @@ export function useBoardPanZoom(
       return;
     }
     event.currentTarget.setPointerCapture(event.pointerId);
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    pointers.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+      originX: event.clientX,
+      originY: event.clientY,
+      panning: false,
+    });
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -76,7 +92,13 @@ export function useBoardPanZoom(
     if (!previous) {
       return;
     }
-    const next = { x: event.clientX, y: event.clientY };
+    const next: BoardPointer = {
+      x: event.clientX,
+      y: event.clientY,
+      originX: previous.originX,
+      originY: previous.originY,
+      panning: previous.panning,
+    };
     const before = [...pointers.current.values()];
     pointers.current.set(event.pointerId, next);
     const after = [...pointers.current.values()];
@@ -85,6 +107,9 @@ export function useBoardPanZoom(
       return;
     }
     if (before.length >= 2 && after.length >= 2) {
+      for (const pointer of after) {
+        pointer.panning = true;
+      }
       const first = before[0];
       const second = before[1];
       const firstAfter = after[0];
@@ -96,8 +121,8 @@ export function useBoardPanZoom(
       const nextDist = distance(firstAfter, secondAfter);
       const prevMid = midpoint(first, second);
       const nextMid = midpoint(firstAfter, secondAfter);
-      const localPrev = pointIn(node, prevMid.x, prevMid.y);
-      const localNext = pointIn(node, nextMid.x, nextMid.y);
+      const localPrev = clientPointInViewport(node, prevMid.x, prevMid.y);
+      const localNext = clientPointInViewport(node, nextMid.x, nextMid.y);
       const origin = layoutOriginRef.current;
       setView((current) => {
         const zoomed =
@@ -105,6 +130,13 @@ export function useBoardPanZoom(
         return panBoardView(zoomed, localNext.x - localPrev.x, localNext.y - localPrev.y);
       });
       return;
+    }
+    if (!next.panning) {
+      const travel = Math.hypot(next.x - next.originX, next.y - next.originY);
+      if (travel < PAN_THRESHOLD_PX) {
+        return;
+      }
+      next.panning = true;
     }
     const delta = clientDeltaToLocal(node, next.x - previous.x, next.y - previous.y);
     setView((current) => panBoardView(current, delta.x, delta.y));
@@ -131,7 +163,7 @@ export function useBoardPanZoom(
   return { view, onPointerDown, onPointerMove, onPointerUp, zoomBy };
 }
 
-function pointIn(node: HTMLElement, clientX: number, clientY: number): { x: number; y: number } {
+export function clientPointInViewport(node: HTMLElement, clientX: number, clientY: number): { x: number; y: number } {
   const rect = node.getBoundingClientRect();
   if (!(rect.width > 0) || !(rect.height > 0)) {
     throw new Error("Board viewport has no size");
@@ -140,6 +172,39 @@ function pointIn(node: HTMLElement, clientX: number, clientY: number): { x: numb
     x: ((clientX - rect.left) / rect.width) * node.clientWidth,
     y: ((clientY - rect.top) / rect.height) * node.clientHeight,
   };
+}
+
+export function boardPointFromViewport(
+  board: HTMLElement,
+  view: BoardView,
+  layoutOrigin: { x: number; y: number },
+  localX: number,
+  localY: number,
+): { x: number; y: number } {
+  const width = board.offsetWidth;
+  const height = board.offsetHeight;
+  if (!(width > 0) || !(height > 0)) {
+    throw new Error("Battleground board has no size");
+  }
+  if (!(view.scale > 0)) {
+    throw new Error("Board zoom must be positive");
+  }
+  return {
+    x: (localX - view.x - layoutOrigin.x) / (view.scale * width),
+    y: (localY - view.y - layoutOrigin.y) / (view.scale * height),
+  };
+}
+
+export function clientPointOnBoard(
+  viewport: HTMLElement,
+  board: HTMLElement,
+  view: BoardView,
+  layoutOrigin: { x: number; y: number },
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } {
+  const local = clientPointInViewport(viewport, clientX, clientY);
+  return boardPointFromViewport(board, view, layoutOrigin, local.x, local.y);
 }
 
 function clientDeltaToLocal(node: HTMLElement, dx: number, dy: number): { x: number; y: number } {

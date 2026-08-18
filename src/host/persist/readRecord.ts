@@ -10,6 +10,7 @@ import {
   asSourceId,
   asTokenId,
   asTrackId,
+  asVeilId,
 } from "../ids";
 import { parseAppSettings, type AppSettings } from "../settings";
 import { syncCombatStatsForCategory } from "../runCard";
@@ -21,11 +22,14 @@ import {
   TOKEN_SIZE_DEFAULT,
   TOKEN_SIZE_MIN,
   TOKEN_SCALE_MIN,
+  VEIL_MIN_CELLS,
   nowIso,
   DEFAULT_CAMPAIGN_GENRE,
   normalizeCampaignGenre,
   type Battleground,
   type BattlegroundToken,
+  type BattlegroundVeil,
+  type VeilKind,
   type Campaign,
   type EncounterBoard,
   type EncounterParticipant,
@@ -318,6 +322,7 @@ export function readEncounterBoard(
     mapMediaId: typeof mapMediaId === "string" ? asMediaId(mapMediaId) : null,
     live: record.live === true,
     tokens: readTokens(record.tokens, ownerId, warnings, store),
+    veils: readVeils(record.veils, ownerId, warnings, store),
     gridSize:
       record.gridSize === undefined
         ? board.gridSize
@@ -616,6 +621,82 @@ function readTokens(
     });
   }
   return tokens;
+}
+
+function readVeils(
+  value: unknown,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "encounters" | "entities",
+): BattlegroundVeil[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    warnings.push({ store, id: ownerId, message: "veils was not a list" });
+    return [];
+  }
+  const veils: BattlegroundVeil[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) {
+      warnings.push({ store, id: ownerId, message: "A veil was not an object and was dropped" });
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id : null;
+    if (id === null) {
+      warnings.push({ store, id: ownerId, message: "A veil was missing id and was dropped" });
+      continue;
+    }
+    const widthCells = readVeilCells(record.widthCells, ownerId, warnings, store);
+    const heightCells = readVeilCells(record.heightCells, ownerId, warnings, store);
+    if (widthCells === null || heightCells === null) {
+      warnings.push({ store, id: ownerId, message: `Veil ${id} had an invalid size and was dropped` });
+      continue;
+    }
+    veils.push({
+      id: asVeilId(id),
+      kind: readVeilKind(record.kind, ownerId, warnings, store),
+      x: typeof record.x === "number" ? record.x : 0.5,
+      y: typeof record.y === "number" ? record.y : 0.5,
+      widthCells,
+      heightCells,
+    });
+  }
+  return veils;
+}
+
+function readVeilKind(
+  value: unknown,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "encounters" | "entities",
+): VeilKind {
+  if (value === undefined) {
+    return "veil";
+  }
+  if (value === "veil" || value === "fog") {
+    return value;
+  }
+  warnings.push({ store, id: ownerId, message: "A veil kind was unknown and was set to veil" });
+  return "veil";
+}
+
+function readVeilCells(
+  value: unknown,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "encounters" | "entities",
+): number | null {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < VEIL_MIN_CELLS) {
+    warnings.push({
+      store,
+      id: ownerId,
+      message: `A veil cell span was not an integer ≥ ${String(VEIL_MIN_CELLS)}`,
+    });
+    return null;
+  }
+  return value;
 }
 
 function readParticipants(

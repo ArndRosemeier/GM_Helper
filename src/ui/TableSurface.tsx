@@ -1,4 +1,11 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   GRID_SIZE_DEFAULT,
@@ -8,20 +15,37 @@ import {
   TOKEN_SIZE_DEFAULT,
   TOKEN_SIZE_MIN,
   TOKEN_STAMP_COLORS,
+  VEIL_DEFAULT_CELLS,
   tokenSizeFittingGrid,
   type BattlegroundToken,
+  type BattlegroundVeil,
   type EncounterParticipant,
   type Entity,
+  type VeilKind,
 } from "../host/types";
 import { combatHpForParticipant } from "../host/encounter";
-import { snapPointToGrid, tokenSpanCells } from "../host/gridSnap";
+import { snapBoxToGrid, snapPointToGrid, tokenSpanCells } from "../host/gridSnap";
 import { useHost } from "../host/HostContext";
-import type { EntityId, TokenId } from "../host/ids";
+import type { EntityId, TokenId, VeilId } from "../host/ids";
 import { defaultTokenDataUrl, tokenArtUrl } from "../lib/defaultToken";
 import { EntityCard } from "./EntityCard";
-import { useBoardPanZoom } from "./useBoardPanZoom";
+import {
+  boardPointFromViewport,
+  clientPointInViewport,
+  clientPointOnBoard,
+  useBoardPanZoom,
+  type BoardView,
+} from "./useBoardPanZoom";
+import {
+  portraitCoveredByVeils,
+  resizeVeilFromEdge,
+  veilCellPx,
+  type VeilEdge,
+} from "../host/veil";
 
 const DRAG_THRESHOLD_PX = 8;
+const DOUBLE_TAP_MS = 500;
+const DOUBLE_TAP_PX = 32;
 /** Extra cells of floor and grid beyond the battlemap, in each direction. */
 const WORLD_PAD_CELLS = 256;
 
@@ -32,10 +56,18 @@ export function TableSurface() {
   const boardOriginRef = useRef({ x: 0, y: 0 });
   const camera = useBoardPanZoom(viewport, boardOriginRef);
   const [selectedTokenId, setSelectedTokenId] = useState<TokenId | null>(null);
+  const [selectedVeilId, setSelectedVeilId] = useState<VeilId | null>(null);
   const [inspecting, setInspecting] = useState(false);
   const [pickingCard, setPickingCard] = useState(false);
+  const placeCardAt = useRef<{ x: number; y: number } | null>(null);
+  const plusButton = useRef<HTMLButtonElement>(null);
+  const boardPointerCount = useRef(0);
+  const emptyTapStart = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  const lastEmptyTap = useRef<{ x: number; y: number; time: number } | null>(null);
   const dragOrigin = useRef<{ x: number; y: number; tokenId: TokenId } | null>(null);
   const didDrag = useRef(false);
+  const veilDragOrigin = useRef<{ x: number; y: number; veilId: VeilId } | null>(null);
+  const didVeilDrag = useRef(false);
   const [mapNatural, setMapNatural] = useState<{
     url: string;
     width: number;
@@ -46,12 +78,14 @@ export function TableSurface() {
   const mapId = snap.tableEncounter?.mapMediaId ?? null;
   const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
   const tokens = (snap.tableEncounter?.tokens ?? []).filter((token) => token.visible);
+  const veils = snap.tableEncounter?.veils ?? [];
   const gridSize = snap.tableEncounter?.gridSize ?? null;
   const unitSize =
     gridSize !== null
       ? tokenSizeFittingGrid(gridSize)
       : (snap.tableEncounter?.tokenSize ?? TOKEN_SIZE_DEFAULT);
   const selected = tokens.find((token) => token.id === selectedTokenId) ?? null;
+  const selectedVeil = veils.find((veil) => veil.id === selectedVeilId) ?? null;
   const selectedHp =
     selected === null ? null : tokenCombatHp(selected, snap.tableEncounter?.participants ?? [], snap.entities);
   const inspectEntityId = inspecting && selected !== null ? selected.entityId : null;
@@ -60,6 +94,7 @@ export function TableSurface() {
       ? null
       : (snap.entities.find((item) => item.id === inspectEntityId) ?? null);
   const tokenScaleKey = tokens.map((token) => token.scale).join(",");
+  const veilLayoutKey = veils.map((veil) => `${veil.id}:${String(veil.widthCells)}x${String(veil.heightCells)}`).join(",");
   const worldPadPx = (gridSize ?? GRID_SIZE_DEFAULT) * WORLD_PAD_CELLS;
   const worldLayerStyle: CSSProperties = {
     left: `-${String(worldPadPx)}px`,
@@ -82,6 +117,17 @@ export function TableSurface() {
     transform: `translate(${String(camera.view.x)}px, ${String(camera.view.y)}px) scale(${String(camera.view.scale)})`,
     "--board-zoom": String(camera.view.scale),
   };
+  const boardWidthPx = boardLayout !== null ? boardLayout.width : (viewportPx === null ? 0 : viewportPx.width);
+  const boardHeightPx = boardLayout !== null ? boardLayout.height : (viewportPx === null ? 0 : viewportPx.height);
+  const boardReady = boardWidthPx > 0 && boardHeightPx > 0;
+  const cellPx = veilCellPx(gridSize, snap.tableEncounter?.tokenSize ?? TOKEN_SIZE_DEFAULT);
+  const coveredCardIds = new Set(
+    boardReady
+      ? tokens
+          .filter((token) => portraitCoveredByVeils(token, veils, unitSize, cellPx, boardWidthPx, boardHeightPx))
+          .map((token) => token.id)
+      : [],
+  );
 
   useLayoutEffect(() => {
     const node = viewport.current;
@@ -113,11 +159,30 @@ export function TableSurface() {
     store,
     snap.tableEncounter?.gridSize,
     snap.tableEncounter?.tokens.length,
+    snap.tableEncounter?.veils.length,
     snap.openedEncounterEntityId,
     tokenScaleKey,
+    veilLayoutKey,
     boardLayout?.width,
     boardLayout?.height,
   ]);
+
+  const requireBoardPoint = (clientX: number, clientY: number): { x: number; y: number } | null => {
+    const viewportNode = viewport.current;
+    const boardNode = board.current;
+    if (!viewportNode || !boardNode) {
+      store.setError("Battleground board is not mounted");
+      return null;
+    }
+    return clientPointOnBoard(
+      viewportNode,
+      boardNode,
+      camera.view,
+      boardOriginRef.current,
+      clientX,
+      clientY,
+    );
+  };
 
   const onTokenPointerDown = (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId): void => {
     event.stopPropagation();
@@ -147,7 +212,10 @@ export function TableSurface() {
       store.setError("Battleground board is not mounted");
       return;
     }
-    const raw = clientPointOnBoard(node, event.clientX, event.clientY);
+    const raw = requireBoardPoint(event.clientX, event.clientY);
+    if (raw === null) {
+      return;
+    }
     const gridSize = snap.tableEncounter?.gridSize ?? null;
     if (gridSize === null) {
       store.run(store.moveToken(tokenId, raw.x, raw.y));
@@ -176,8 +244,193 @@ export function TableSurface() {
     dragOrigin.current = null;
     if (!didDrag.current) {
       setSelectedTokenId((current) => (current === tokenId ? null : tokenId));
+      setSelectedVeilId(null);
       setInspecting(false);
     }
+  };
+
+  const onVeilPointerDown = (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId): void => {
+    event.stopPropagation();
+    event.preventDefault();
+    didVeilDrag.current = false;
+    veilDragOrigin.current = { x: event.clientX, y: event.clientY, veilId };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onVeilPointerMove = (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId): void => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+      return;
+    }
+    const origin = veilDragOrigin.current;
+    if (origin !== null && origin.veilId === veilId) {
+      const dx = event.clientX - origin.x;
+      const dy = event.clientY - origin.y;
+      if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+        didVeilDrag.current = true;
+      }
+    }
+    if (!didVeilDrag.current) {
+      return;
+    }
+    const node = board.current;
+    if (!node) {
+      store.setError("Battleground board is not mounted");
+      return;
+    }
+    const raw = requireBoardPoint(event.clientX, event.clientY);
+    if (raw === null) {
+      return;
+    }
+    const grid = snap.tableEncounter?.gridSize ?? null;
+    if (grid === null) {
+      store.run(store.moveVeil(veilId, raw.x, raw.y));
+      return;
+    }
+    const veil = veils.find((item) => item.id === veilId);
+    if (!veil) {
+      store.setError(`Encounter has no veil ${veilId}`);
+      return;
+    }
+    const snapped = snapBoxToGrid(
+      raw.x,
+      raw.y,
+      node.offsetWidth,
+      node.offsetHeight,
+      grid,
+      veil.widthCells,
+      veil.heightCells,
+    );
+    store.run(store.moveVeil(veilId, snapped.x, snapped.y));
+  };
+
+  const onVeilPointerUp = (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId): void => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    veilDragOrigin.current = null;
+    if (!didVeilDrag.current) {
+      setSelectedVeilId((current) => (current === veilId ? null : veilId));
+      setSelectedTokenId(null);
+      setInspecting(false);
+    }
+  };
+
+  const onVeilResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    event.stopPropagation();
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onVeilResizePointerMove = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    veilId: VeilId,
+    edge: VeilEdge,
+  ): void => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+      return;
+    }
+    const node = board.current;
+    const raw = requireBoardPoint(event.clientX, event.clientY);
+    if (!node || raw === null) {
+      store.setError("Battleground board is not mounted");
+      return;
+    }
+    const veil = veils.find((item) => item.id === veilId);
+    if (!veil) {
+      store.setError(`Encounter has no veil ${veilId}`);
+      return;
+    }
+    const next = resizeVeilFromEdge(
+      veil,
+      edge,
+      raw,
+      node.offsetWidth,
+      node.offsetHeight,
+      cellPx,
+    );
+    store.run(store.resizeVeil(next.id, next.x, next.y, next.widthCells, next.heightCells));
+  };
+
+  const onVeilResizePointerUp = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const openCardPicker = (at: { x: number; y: number } | null): void => {
+    placeCardAt.current = at;
+    setPickingCard(true);
+  };
+
+  const closeCardPicker = (): void => {
+    placeCardAt.current = null;
+    setPickingCard(false);
+  };
+
+  const onBoardPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const target = event.target;
+    if (isEmptyBoardTarget(target, event.currentTarget)) {
+      setSelectedTokenId(null);
+      setSelectedVeilId(null);
+      setInspecting(false);
+    }
+    camera.onPointerDown(event);
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    boardPointerCount.current += 1;
+    if (boardPointerCount.current > 1) {
+      emptyTapStart.current = null;
+      lastEmptyTap.current = null;
+      return;
+    }
+    if (!snap.session || !isEmptyBoardTarget(target, event.currentTarget)) {
+      emptyTapStart.current = null;
+      return;
+    }
+    emptyTapStart.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+  };
+
+  const onBoardPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    camera.onPointerMove(event);
+    const start = emptyTapStart.current;
+    if (start === null || start.pointerId !== event.pointerId) {
+      return;
+    }
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+      emptyTapStart.current = null;
+      lastEmptyTap.current = null;
+    }
+  };
+
+  const onBoardPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    camera.onPointerUp(event);
+    if (boardPointerCount.current > 0) {
+      boardPointerCount.current -= 1;
+    }
+    const start = emptyTapStart.current;
+    emptyTapStart.current = null;
+    if (start === null || start.pointerId !== event.pointerId || !snap.session) {
+      return;
+    }
+    const now = performance.now();
+    const previous = lastEmptyTap.current;
+    if (
+      previous !== null &&
+      now - previous.time <= DOUBLE_TAP_MS &&
+      Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= DOUBLE_TAP_PX
+    ) {
+      lastEmptyTap.current = null;
+      const at = requireBoardPoint(event.clientX, event.clientY);
+      if (at === null) {
+        return;
+      }
+      openCardPicker(at);
+      return;
+    }
+    lastEmptyTap.current = { x: event.clientX, y: event.clientY, time: now };
   };
 
   return (
@@ -189,22 +442,10 @@ export function TableSurface() {
           backgroundSize: `${String(256 * camera.view.scale)}px ${String(256 * camera.view.scale)}px`,
           backgroundPosition: `${String(camera.view.x + boardLeft)}px ${String(camera.view.y + boardTop)}px`,
         }}
-        onPointerDown={(event) => {
-          const target = event.target as HTMLElement;
-          if (
-            event.target === event.currentTarget ||
-            target.classList.contains("board") ||
-            target.classList.contains("board-map") ||
-            target.classList.contains("grid")
-          ) {
-            setSelectedTokenId(null);
-            setInspecting(false);
-          }
-          camera.onPointerDown(event);
-        }}
-        onPointerMove={camera.onPointerMove}
-        onPointerUp={camera.onPointerUp}
-        onPointerCancel={camera.onPointerUp}
+        onPointerDown={onBoardPointerDown}
+        onPointerMove={onBoardPointerMove}
+        onPointerUp={onBoardPointerUp}
+        onPointerCancel={onBoardPointerUp}
       >
         <div
           ref={board}
@@ -252,19 +493,39 @@ export function TableSurface() {
               onPointerUp={onTokenPointerUp}
             />
           ))}
-          {tokens.filter((token) => !isStampToken(token)).map((token) => (
-            <BoardToken
-              key={token.id}
-              token={token}
-              unitSize={unitSize}
-              selected={token.id === selectedTokenId}
-              artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
-              onPointerDown={onTokenPointerDown}
-              onPointerMove={onTokenPointerMove}
-              onPointerUp={onTokenPointerUp}
-            />
-          ))}
-          {selected ? (
+          {boardReady
+            ? veils
+                .filter((veil) => veil.kind === "veil")
+                .map((veil) => (
+                  <BoardVeil
+                    key={veil.id}
+                    veil={veil}
+                    cellPx={cellPx}
+                    selected={veil.id === selectedVeilId}
+                    onPointerDown={onVeilPointerDown}
+                    onPointerMove={onVeilPointerMove}
+                    onPointerUp={onVeilPointerUp}
+                    onResizePointerDown={onVeilResizePointerDown}
+                    onResizePointerMove={onVeilResizePointerMove}
+                    onResizePointerUp={onVeilResizePointerUp}
+                  />
+                ))
+            : null}
+          {tokens
+            .filter((token) => !isStampToken(token) && !coveredCardIds.has(token.id))
+            .map((token) => (
+              <BoardToken
+                key={token.id}
+                token={token}
+                unitSize={unitSize}
+                selected={token.id === selectedTokenId}
+                artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
+                onPointerDown={onTokenPointerDown}
+                onPointerMove={onTokenPointerMove}
+                onPointerUp={onTokenPointerUp}
+              />
+            ))}
+          {selected !== null && !coveredCardIds.has(selected.id) ? (
             <TokenFloatControls
               token={selected}
               unitSize={unitSize}
@@ -283,6 +544,34 @@ export function TableSurface() {
               }}
             />
           ) : null}
+          {boardReady
+            ? veils
+                .filter((veil) => veil.kind === "fog")
+                .map((veil) => (
+                  <BoardVeil
+                    key={veil.id}
+                    veil={veil}
+                    cellPx={cellPx}
+                    selected={veil.id === selectedVeilId}
+                    onPointerDown={onVeilPointerDown}
+                    onPointerMove={onVeilPointerMove}
+                    onPointerUp={onVeilPointerUp}
+                    onResizePointerDown={onVeilResizePointerDown}
+                    onResizePointerMove={onVeilResizePointerMove}
+                    onResizePointerUp={onVeilResizePointerUp}
+                  />
+                ))
+            : null}
+          {selectedVeil !== null ? (
+            <VeilFloatControls
+              veil={selectedVeil}
+              cellPx={cellPx}
+              onRemove={() => {
+                store.run(store.removeVeil(selectedVeil.id));
+                setSelectedVeilId(null);
+              }}
+            />
+          ) : null}
           {tokens.length === 0 && !mapUrl ? (
             <p className="board-empty">No public map yet. Pick the pad up, or tap Lift.</p>
           ) : null}
@@ -291,16 +580,41 @@ export function TableSurface() {
       {snap.session ? (
         <BoardScaleControls
           compact
-          onPickCard={() => setPickingCard(true)}
-          onAddShape={(shape, color) => {
+          plusButtonRef={plusButton}
+          onPickCard={() => openCardPicker(null)}
+          onAddShape={(shape, color, control) => {
             const viewportNode = viewport.current;
             const boardNode = board.current;
             if (!viewportNode || !boardNode) {
               store.setError("Battleground board is not mounted");
               return;
             }
-            const at = viewportCenterOnBoard(viewportNode, boardNode);
+            const at = pointBesideControl(
+              control,
+              viewportNode,
+              boardNode,
+              camera.view,
+              boardOriginRef.current,
+              unitSize,
+            );
             store.run(store.addShapeToken(shape, color, at.x, at.y));
+          }}
+          onAddCover={(kind, control) => {
+            const viewportNode = viewport.current;
+            const boardNode = board.current;
+            if (!viewportNode || !boardNode) {
+              store.setError("Battleground board is not mounted");
+              return;
+            }
+            const at = pointBesideControl(
+              control,
+              viewportNode,
+              boardNode,
+              camera.view,
+              boardOriginRef.current,
+              VEIL_DEFAULT_CELLS * cellPx,
+            );
+            store.run(store.addVeil(kind, at.x, at.y));
           }}
         />
       ) : null}
@@ -337,10 +651,22 @@ export function TableSurface() {
       {pickingCard
         ? createPortal(
             <BattlegroundCardPicker
-              onClose={() => setPickingCard(false)}
+              onClose={closeCardPicker}
               onPick={(entityId) => {
-                store.run(store.placeCardOnBattleground(entityId));
-                setPickingCard(false);
+                const viewportNode = viewport.current;
+                const boardNode = board.current;
+                const at =
+                  placeCardAt.current ??
+                  pointBesideControl(
+                    plusButton.current,
+                    viewportNode,
+                    boardNode,
+                    camera.view,
+                    boardOriginRef.current,
+                    unitSize,
+                  );
+                store.run(store.placeCardOnBattleground(entityId, at));
+                closeCardPicker();
               }}
             />,
             document.body,
@@ -573,27 +899,170 @@ function isStampToken(token: BattlegroundToken): boolean {
   return token.shape === "circle" || token.shape === "square";
 }
 
-function clientPointOnBoard(
-  board: HTMLElement,
-  clientX: number,
-  clientY: number,
-): { x: number; y: number } {
-  const rect = board.getBoundingClientRect();
-  if (!(rect.width > 0) || !(rect.height > 0)) {
-    throw new Error("Battleground board has no size");
+const VEIL_EDGES: ReadonlyArray<VeilEdge> = ["n", "e", "s", "w"];
+
+function veilResizeLabel(kind: VeilKind, edge: VeilEdge): string {
+  const piece = kind === "fog" ? "fog" : "veil";
+  if (edge === "n") {
+    return `Resize ${piece} from top`;
   }
-  return {
-    x: (clientX - rect.left) / rect.width,
-    y: (clientY - rect.top) / rect.height,
-  };
+  if (edge === "e") {
+    return `Resize ${piece} from right`;
+  }
+  if (edge === "s") {
+    return `Resize ${piece} from bottom`;
+  }
+  return `Resize ${piece} from left`;
 }
 
-function viewportCenterOnBoard(viewport: HTMLElement, board: HTMLElement): { x: number; y: number } {
-  const viewRect = viewport.getBoundingClientRect();
-  if (!(viewRect.width > 0) || !(viewRect.height > 0)) {
-    throw new Error("Battleground viewport has no size");
+function BoardVeil({
+  veil,
+  cellPx,
+  selected,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onResizePointerDown,
+  onResizePointerMove,
+  onResizePointerUp,
+}: {
+  veil: BattlegroundVeil;
+  cellPx: number;
+  selected: boolean;
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId) => void;
+  onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onResizePointerMove: (event: ReactPointerEvent<HTMLButtonElement>, veilId: VeilId, edge: VeilEdge) => void;
+  onResizePointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+}) {
+  const veilStyle: CSSProperties = {
+    left: `${String(veil.x * 100)}%`,
+    top: `${String(veil.y * 100)}%`,
+    width: `${String(veil.widthCells * cellPx)}px`,
+    height: `${String(veil.heightCells * cellPx)}px`,
+  };
+  const fog = veil.kind === "fog";
+  const veilClass = [
+    "veil",
+    fog ? "is-fog" : null,
+    selected ? "is-selected" : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" ");
+  return (
+    <div
+      className={veilClass}
+      style={veilStyle}
+      role="img"
+      aria-label={fog ? "Fog of war" : "Veil"}
+      onPointerDown={(event) => onPointerDown(event, veil.id)}
+      onPointerMove={(event) => onPointerMove(event, veil.id)}
+      onPointerUp={(event) => onPointerUp(event, veil.id)}
+      onPointerCancel={(event) => onPointerUp(event, veil.id)}
+    >
+      {fog ? (
+        <span className="veil-fog-clip">
+          <span className="veil-fog is-back" />
+          <span className="veil-fog" />
+        </span>
+      ) : null}
+      {selected
+        ? VEIL_EDGES.map((edge) => (
+            <button
+              key={edge}
+              type="button"
+              className={`veil-handle is-${edge}`}
+              aria-label={veilResizeLabel(veil.kind, edge)}
+              onPointerDown={onResizePointerDown}
+              onPointerMove={(event) => {
+                event.stopPropagation();
+                onResizePointerMove(event, veil.id, edge);
+              }}
+              onPointerUp={(event) => {
+                event.stopPropagation();
+                onResizePointerUp(event);
+              }}
+              onPointerCancel={(event) => {
+                event.stopPropagation();
+                onResizePointerUp(event);
+              }}
+            />
+          ))
+        : null}
+    </div>
+  );
+}
+
+function VeilFloatControls({
+  veil,
+  cellPx,
+  onRemove,
+}: {
+  veil: BattlegroundVeil;
+  cellPx: number;
+  onRemove: () => void;
+}) {
+  const controlStyle: CSSProperties & { "--token-ctrl-size": string } = {
+    left: `calc(${String(veil.x * 100)}% + ${String((veil.widthCells * cellPx) / 2 + 8)}px)`,
+    top: `${String(veil.y * 100)}%`,
+    "--token-ctrl-size": `${String(cellPx * 0.8)}px`,
+  };
+  return (
+    <div
+      className="token-float-controls"
+      style={controlStyle}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div className="token-float-buttons">
+        <button type="button" aria-label={veil.kind === "fog" ? "Remove fog" : "Remove veil"} onClick={onRemove}>
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function pointBesideControl(
+  control: HTMLElement | null,
+  viewport: HTMLElement | null,
+  board: HTMLDivElement | null,
+  view: BoardView,
+  layoutOrigin: { x: number; y: number },
+  itemBoardPx: number,
+): { x: number; y: number } {
+  if (!control || !viewport || !board) {
+    throw new Error("Battleground board is not mounted");
   }
-  return clientPointOnBoard(board, viewRect.left + viewRect.width / 2, viewRect.top + viewRect.height / 2);
+  if (!(itemBoardPx > 0)) {
+    throw new Error("Token size must be positive");
+  }
+  const rect = control.getBoundingClientRect();
+  if (!(rect.width > 0) || !(rect.height > 0)) {
+    throw new Error("Board stamp control has no size");
+  }
+  const mid = clientPointInViewport(viewport, rect.right, rect.top + rect.height / 2);
+  const gapPx = 8;
+  return boardPointFromViewport(
+    board,
+    view,
+    layoutOrigin,
+    mid.x + gapPx + (itemBoardPx * view.scale) / 2,
+    mid.y,
+  );
+}
+
+function isEmptyBoardTarget(target: EventTarget, viewport: EventTarget): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return (
+    target === viewport ||
+    target.classList.contains("board") ||
+    target.classList.contains("board-map") ||
+    target.classList.contains("grid") ||
+    target.classList.contains("board-empty")
+  );
 }
 
 function battlemapBoardLayout(
@@ -630,12 +1099,16 @@ function containInBox(
 
 function BoardScaleControls({
   compact = false,
+  plusButtonRef,
   onPickCard,
   onAddShape,
+  onAddCover,
 }: {
   compact?: boolean;
+  plusButtonRef?: RefObject<HTMLButtonElement | null>;
   onPickCard?: () => void;
-  onAddShape: (shape: "circle" | "square", color: string) => void;
+  onAddShape: (shape: "circle" | "square", color: string, control: HTMLElement) => void;
+  onAddCover: (kind: VeilKind, control: HTMLElement) => void;
 }) {
   const { store, snap } = useHost();
   const lastGrid = useRef(snap.tableEncounter?.gridSize ?? GRID_SIZE_DEFAULT);
@@ -695,22 +1168,46 @@ function BoardScaleControls({
               className="board-stamp is-circle"
               style={{ background: color }}
               aria-label={`Add circle token ${color}`}
-              onClick={() => onAddShape("circle", color)}
+              onClick={(event) => onAddShape("circle", color, event.currentTarget)}
             />
             <button
               type="button"
               className="board-stamp is-square"
               style={{ background: color }}
               aria-label={`Add square token ${color}`}
-              onClick={() => onAddShape("square", color)}
+              onClick={(event) => onAddShape("square", color, event.currentTarget)}
             />
           </div>
         ))}
-        {onPickCard ? (
-          <button type="button" className="board-stamp-add" aria-label="Add card to battleground" onClick={onPickCard}>
-            +
+        <div className="board-stamp-column">
+          {onPickCard ? (
+            <button
+              ref={plusButtonRef}
+              type="button"
+              className="board-stamp-add"
+              aria-label="Add card to battleground"
+              onClick={onPickCard}
+            >
+              +
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="board-stamp-veil"
+            aria-label="Add veil"
+            onClick={(event) => onAddCover("veil", event.currentTarget)}
+          >
+            <span className="board-stamp-veil-mark" />
           </button>
-        ) : null}
+          <button
+            type="button"
+            className="board-stamp-fog"
+            aria-label="Add fog of war"
+            onClick={(event) => onAddCover("fog", event.currentTarget)}
+          >
+            <span className="board-stamp-fog-mark" />
+          </button>
+        </div>
       </div>
     </div>
   );

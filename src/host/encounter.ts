@@ -1,6 +1,7 @@
 import {
   newParticipantId,
   newTokenId,
+  newVeilId,
   type EntityId,
   type MediaId,
   type ParticipantId,
@@ -28,6 +29,7 @@ export function emptyEncounterBoard(): EncounterBoard {
     mapMediaId: null,
     live: false,
     tokens: [],
+    veils: [],
     gridSize: board.gridSize,
     tokenSize: board.tokenSize,
   };
@@ -44,6 +46,7 @@ export function boardOf(state: EncounterBoard): EncounterBoard {
     mapMediaId: state.mapMediaId,
     live: state.live,
     tokens: state.tokens,
+    veils: state.veils,
     gridSize: state.gridSize,
     tokenSize: state.tokenSize,
   };
@@ -244,10 +247,15 @@ export function cloneEncounterBoard(board: EncounterBoard): EncounterBoard {
     participantId:
       token.participantId === null ? null : (participantIds.get(token.participantId) ?? null),
   }));
+  const veils = board.veils.map((veil) => ({
+    ...veil,
+    id: newVeilId(),
+  }));
   return {
     ...boardOf(board),
     participants,
     tokens,
+    veils,
   };
 }
 

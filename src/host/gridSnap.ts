@@ -38,8 +38,20 @@ export function snapPointToGrid(
   gridSize: number,
   spanCells: number,
 ): { x: number; y: number } {
+  return snapBoxToGrid(x, y, boardWidth, boardHeight, gridSize, spanCells, spanCells);
+}
+
+export function snapBoxToGrid(
+  x: number,
+  y: number,
+  boardWidth: number,
+  boardHeight: number,
+  gridSize: number,
+  spanXCells: number,
+  spanYCells: number,
+): { x: number; y: number } {
   return {
-    x: snapAxisToGrid(x, boardWidth, gridSize, spanCells),
-    y: snapAxisToGrid(y, boardHeight, gridSize, spanCells),
+    x: snapAxisToGrid(x, boardWidth, gridSize, spanXCells),
+    y: snapAxisToGrid(y, boardHeight, gridSize, spanYCells),
   };
 }

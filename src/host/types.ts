@@ -10,6 +10,7 @@ import type {
   SourceId,
   TokenId,
   TrackId,
+  VeilId,
 } from "./ids";
 
 /** Persisted document types. Changing a field requires a SCHEMA_VERSION bump and a migration — see persist/schema.ts. */
@@ -172,6 +173,22 @@ export function normalizeCampaignGenre(value: string): string {
 
 export type TokenShape = "circle" | "square" | "portrait";
 
+export const VEIL_DEFAULT_CELLS = 2;
+export const VEIL_MIN_CELLS = 1;
+
+export type VeilKind = "veil" | "fog";
+
+export type BattlegroundVeil = {
+  id: VeilId;
+  kind: VeilKind;
+  x: number;
+  y: number;
+  /** Width in grid cells, or token-size units when the grid is off. */
+  widthCells: number;
+  /** Height in grid cells, or token-size units when the grid is off. */
+  heightCells: number;
+};
+
 export type BattlegroundToken = {
   id: TokenId;
   /** Null for geometric stamp tokens with no card. */
@@ -327,6 +344,7 @@ export type EncounterBoard = {
   mapMediaId: MediaId | null;
   live: boolean;
   tokens: ReadonlyArray<BattlegroundToken>;
+  veils: ReadonlyArray<BattlegroundVeil>;
   /** Cell size in CSS pixels. `null` hides the grid. */
   gridSize: number | null;
   tokenSize: number;

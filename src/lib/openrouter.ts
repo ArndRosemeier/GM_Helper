@@ -273,11 +273,23 @@ async function postChat(
   apiKey: string,
   body: Record<string, unknown>,
 ): Promise<ChatCompletionResponse> {
-  const response = await fetch(CHAT_URL, {
-    method: "POST",
-    headers: headers(apiKey),
-    body: JSON.stringify(body),
-  });
+  const encoded = JSON.stringify(body);
+  let response: Response;
+  try {
+    response = await fetch(CHAT_URL, {
+      method: "POST",
+      headers: headers(apiKey),
+      body: encoded,
+    });
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (encoded.length > 400_000) {
+      throw new Error(
+        `OpenRouter chat request failed (${detail}). The request was ${String(encoded.length)} bytes; large picture payloads are often blocked in the browser.`,
+      );
+    }
+    throw new Error(`OpenRouter chat request failed (${detail})`);
+  }
   const payload = (await response.json()) as ChatCompletionResponse;
   if (!response.ok) {
     throw new Error(payload.error?.message ?? `OpenRouter HTTP ${response.status}`);

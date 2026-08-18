@@ -123,6 +123,18 @@ export const SCHEMA_MIGRATIONS: ReadonlyArray<SchemaMigration> = [
     reason: "UI campaigns store a genre, defaulting to Fantasy.",
     apply: migrate13to14,
   },
+  {
+    from: 14,
+    to: 15,
+    reason: "Encounter boards store veils that hide covered cards.",
+    apply: migrate14to15,
+  },
+  {
+    from: 15,
+    to: 16,
+    reason: "Veils record a kind so fog of war can cover the board.",
+    apply: migrate15to16,
+  },
 ];
 
 export function assertMigrationChain(
@@ -404,6 +416,40 @@ async function migrate13to14(db: GmDb): Promise<ReadonlyArray<MigrationWarning>>
     const next = readSession(raw, warnings);
     if (next) {
       await db.put("sessions", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate14to15(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (next) {
+      await db.put("encounters", next);
+    }
+  }
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      await db.put("entities", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate15to16(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (next) {
+      await db.put("encounters", next);
+    }
+  }
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      await db.put("entities", next);
     }
   }
   return warnings;

@@ -1528,6 +1528,52 @@ body.is-card-dragging .encounter-roster {
   cursor: pointer;
 }
 
+.board-stamp-veil {
+  width: var(--tap);
+  height: var(--tap);
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  border-radius: 3px;
+  border: 2px solid #f7f3ea;
+  background: rgb(40 36 30 / 0.9);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.board-stamp-veil-mark {
+  width: 22px;
+  height: 22px;
+  border: 2px dashed #f7f3ea;
+  border-radius: 2px;
+  background: transparent;
+}
+
+.board-stamp-fog {
+  width: var(--tap);
+  height: var(--tap);
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  border-radius: 3px;
+  border: 2px solid #f7f3ea;
+  background: rgb(40 36 30 / 0.9);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.board-stamp-fog-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 2px;
+  background:
+    radial-gradient(ellipse at 32% 38%, #5a574e 0%, transparent 58%),
+    radial-gradient(ellipse at 70% 72%, #2a2924 0%, transparent 52%),
+    #0c0c0b;
+}
+
 .token.is-stamp {
   opacity: 0.8;
   z-index: 1;
@@ -1535,6 +1581,156 @@ body.is-card-dragging .encounter-roster {
 
 .token.is-stamp.is-selected {
   z-index: 2;
+}
+
+.veil {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
+  border: 2px dashed #f7f3ea;
+  background: transparent;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.veil.is-selected {
+  z-index: 5;
+  border-style: solid;
+  border-color: #c9a227;
+}
+
+.veil.is-fog {
+  z-index: 6;
+  border: 2px solid #111;
+  background: #050504;
+}
+
+.veil.is-fog.is-selected {
+  z-index: 7;
+  border-color: #c9a227;
+}
+
+.veil-fog-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.veil-fog {
+  position: absolute;
+  inset: -55%;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 42% 34% at 18% 40%, #3f3d38 0%, transparent 70%),
+    radial-gradient(ellipse 48% 40% at 72% 22%, #1c1b18 0%, transparent 65%),
+    radial-gradient(ellipse 36% 46% at 58% 78%, #2c2b27 0%, transparent 68%),
+    radial-gradient(ellipse 50% 32% at 28% 82%, #12110f 0%, transparent 62%);
+  animation: veil-fog-drift 16s ease-in-out infinite;
+}
+
+.veil-fog.is-back {
+  animation-duration: 23s;
+  animation-direction: reverse;
+  opacity: 0.9;
+  background:
+    radial-gradient(ellipse 40% 38% at 80% 60%, #2a2925 0%, transparent 68%),
+    radial-gradient(ellipse 52% 30% at 35% 18%, #161513 0%, transparent 64%),
+    radial-gradient(ellipse 34% 44% at 12% 70%, #3a3832 0%, transparent 66%);
+}
+
+@keyframes veil-fog-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  40% {
+    transform: translate(5%, -4%) scale(1.06);
+  }
+  70% {
+    transform: translate(-4%, 5%) scale(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .veil-fog {
+    animation: none;
+  }
+}
+
+.veil-handle {
+  position: absolute;
+  z-index: 1;
+  width: var(--tap);
+  height: var(--tap);
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.veil-handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: #f7f3ea;
+  border: 1px solid #111;
+  border-radius: 3px;
+}
+
+.veil-handle.is-n,
+.veil-handle.is-s {
+  left: 50%;
+}
+
+.veil-handle.is-n {
+  top: 0;
+  transform: translate(-50%, -50%) scale(calc(1 / var(--board-zoom)));
+  cursor: ns-resize;
+}
+
+.veil-handle.is-s {
+  bottom: 0;
+  top: auto;
+  transform: translate(-50%, 50%) scale(calc(1 / var(--board-zoom)));
+  cursor: ns-resize;
+}
+
+.veil-handle.is-e,
+.veil-handle.is-w {
+  top: 50%;
+}
+
+.veil-handle.is-e {
+  right: 0;
+  left: auto;
+  transform: translate(50%, -50%) scale(calc(1 / var(--board-zoom)));
+  cursor: ew-resize;
+}
+
+.veil-handle.is-w {
+  left: 0;
+  transform: translate(-50%, -50%) scale(calc(1 / var(--board-zoom)));
+  cursor: ew-resize;
+}
+
+.veil-handle.is-n::after,
+.veil-handle.is-s::after {
+  width: 22px;
+  height: 6px;
+}
+
+.veil-handle.is-e::after,
+.veil-handle.is-w::after {
+  width: 6px;
+  height: 22px;
 }
 
 .token:not(.is-stamp) {
@@ -1575,7 +1771,7 @@ body.is-card-dragging .encounter-roster {
 
 .token-float-controls {
   position: absolute;
-  z-index: 5;
+  z-index: 8;
   transform-origin: 0 0;
   transform: scale(calc(1 / var(--board-zoom))) translateY(-50%);
   display: flex;

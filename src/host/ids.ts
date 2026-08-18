@@ -8,6 +8,7 @@ export type MediaId = string & { readonly __brand: "MediaId" };
 export type LogEntryId = string & { readonly __brand: "LogEntryId" };
 export type TrackId = string & { readonly __brand: "TrackId" };
 export type TokenId = string & { readonly __brand: "TokenId" };
+export type VeilId = string & { readonly __brand: "VeilId" };
 export type ParticipantId = string & { readonly __brand: "ParticipantId" };
 
 function brand<T extends string>(value: string): T {
@@ -28,6 +29,7 @@ export const newMediaId = (): MediaId => fresh<MediaId>();
 export const newLogEntryId = (): LogEntryId => fresh<LogEntryId>();
 export const newTrackId = (): TrackId => fresh<TrackId>();
 export const newTokenId = (): TokenId => fresh<TokenId>();
+export const newVeilId = (): VeilId => fresh<VeilId>();
 export const newParticipantId = (): ParticipantId => fresh<ParticipantId>();
 
 export const asCampaignId = (value: string): CampaignId => brand<CampaignId>(value);
@@ -40,4 +42,5 @@ export const asMediaId = (value: string): MediaId => brand<MediaId>(value);
 export const asLogEntryId = (value: string): LogEntryId => brand<LogEntryId>(value);
 export const asTrackId = (value: string): TrackId => brand<TrackId>(value);
 export const asTokenId = (value: string): TokenId => brand<TokenId>(value);
+export const asVeilId = (value: string): VeilId => brand<VeilId>(value);
 export const asParticipantId = (value: string): ParticipantId => brand<ParticipantId>(value);
