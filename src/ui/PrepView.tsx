@@ -1,7 +1,11 @@
+import { Suspense, lazy } from "react";
 import { useHost } from "../host/HostContext";
 import { MediaViewer } from "./MediaViewer";
-import { SourceViewer } from "./SourceViewer";
 import { UrlViewer } from "./UrlViewer";
+
+const SourceViewer = lazy(() =>
+  import("./SourceViewer").then((module) => ({ default: module.SourceViewer })),
+);
 
 export function PrepView() {
   const { store, snap } = useHost();
@@ -14,7 +18,12 @@ export function PrepView() {
         </button>
         <h1>Docs</h1>
       </header>
-      {snap.urlView ? <UrlViewer /> : snap.sourceView ? <SourceViewer /> : null}
+      {snap.urlView ? <UrlViewer /> : null}
+      {snap.sourceView ? (
+        <Suspense fallback={<p className="muted">Opening source…</p>}>
+          <SourceViewer />
+        </Suspense>
+      ) : null}
       {snap.mediaViewEntityId ? <MediaViewer /> : null}
       <section>
         <h2>Sources</h2>

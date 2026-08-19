@@ -49,6 +49,7 @@ export function foldScenesIntoEncounters(
       initiativeEnabled: false,
       initiativeOrder: [],
       stage: null,
+      stagingGround: null,
     });
   }
 
@@ -67,6 +68,7 @@ export function withBoardDefaults(encounter: EncounterState): EncounterState {
     initiativeEnabled: encounter.initiativeEnabled === true,
     initiativeOrder: encounter.initiativeOrder ?? [],
     stage: encounter.stage ?? null,
+    stagingGround: encounter.stagingGround ?? null,
   };
 }
 

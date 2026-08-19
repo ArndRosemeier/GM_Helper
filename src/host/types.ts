@@ -177,6 +177,18 @@ export const VEIL_MIN_CELLS = 1;
 
 export type VeilKind = "veil" | "fog";
 
+export const STAGING_GROUND_CELLS = 3;
+
+export type StagingGround = {
+  /** Normalized center of the 3×3 block. */
+  x: number;
+  y: number;
+  /** Normalized width of one grid cell (for spawn layout). */
+  cellWidth: number;
+  /** Normalized height of one grid cell (for spawn layout). */
+  cellHeight: number;
+};
+
 export type BattlegroundVeil = {
   id: VeilId;
   kind: VeilKind;
@@ -340,6 +352,7 @@ export type EncounterStageSnapshot = {
   tokenSize: number;
   tokens: ReadonlyArray<BattlegroundToken>;
   veils: ReadonlyArray<BattlegroundVeil>;
+  stagingGround: StagingGround | null;
 };
 
 export type EncounterBoard = {
@@ -356,6 +369,8 @@ export type EncounterBoard = {
   initiativeOrder: ReadonlyArray<TokenId>;
   /** Saved opening layout for reset. `null` until the GM sets the stage. */
   stage: EncounterStageSnapshot | null;
+  /** Player spawn area. Fixed 3×3 grid cells. */
+  stagingGround: StagingGround | null;
 };
 
 export type EncounterBlock = { kind: "encounter" } & EncounterBoard;

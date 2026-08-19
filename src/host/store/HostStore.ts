@@ -29,6 +29,7 @@ import {
   TOKEN_SIZE_MIN,
   nextTokenScale,
   TOKEN_STAMP_COLORS,
+  STAGING_GROUND_CELLS,
   VEIL_DEFAULT_CELLS,
   VEIL_MIN_CELLS,
   tokenSizeFittingGrid,
@@ -78,7 +79,10 @@ import {
   isEncounterCard,
   isFighterEntity,
   isPlayerCard,
+  repositionPlayersInStagingGround,
+  restoreAllNpcHp,
   scrubEntityFromBoard,
+  stagingGroundAt,
   tokenFromEntity,
   withEncounterBlock,
   withTokenHpOwnership,
@@ -94,6 +98,7 @@ import {
   visibleFighterTokenIds,
 } from "../initiative";
 import { snapBoxToGrid, snapPointToGrid, tokenSpanCells } from "../gridSnap";
+import { veilCellPx } from "../veil";
 import { SCHEMA_META_KEY } from "../persist/schema";
 import {
   formatMigrationWarnings,
@@ -1398,6 +1403,41 @@ export class HostStore {
     this.emit();
   }
 
+  async setStagingGround(x: number, y: number, boardWidth: number, boardHeight: number): Promise<void> {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      this.setErrorAndThrow("Staging ground position must be a finite board coordinate");
+    }
+    const encounter = await this.ensureTargetEncounter();
+    const cellPx = veilCellPx(encounter.gridSize, encounter.tokenSize);
+    const stagingGround = stagingGroundAt(x, y, boardWidth, boardHeight, cellPx);
+    const withStaging = repositionPlayersInStagingGround(
+      { ...encounter, stagingGround },
+      this.entities,
+      encounter.sessionId,
+    );
+    await this.putEncounter({ ...withStaging, sessionId: encounter.sessionId });
+    this.emit();
+  }
+
+  async moveStagingGround(x: number, y: number, boardWidth: number, boardHeight: number): Promise<void> {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      this.setErrorAndThrow("Staging ground position must be a finite board coordinate");
+    }
+    const encounter = await this.ensureTargetEncounter();
+    if (encounter.stagingGround === null) {
+      this.setErrorAndThrow("Encounter has no staging ground");
+    }
+    const cellPx = veilCellPx(encounter.gridSize, encounter.tokenSize);
+    const stagingGround = stagingGroundAt(x, y, boardWidth, boardHeight, cellPx);
+    const withStaging = repositionPlayersInStagingGround(
+      { ...encounter, stagingGround },
+      this.entities,
+      encounter.sessionId,
+    );
+    await this.putEncounter({ ...withStaging, sessionId: encounter.sessionId });
+    this.emit();
+  }
+
   async placeCardOnBattleground(entityId: EntityId, at: { x: number; y: number } | null): Promise<void> {
     const entity = this.requireEntity(entityId);
     if (isEncounterCard(entity)) {
@@ -1450,45 +1490,79 @@ export class HostStore {
     }
     const encounter = this.requireTargetEncounter();
     const gridSize = encounter.gridSize;
-    if (gridSize === null) {
+    const cellPx = veilCellPx(gridSize, encounter.tokenSize);
+    if (gridSize === null && encounter.stagingGround === null) {
       return;
     }
     let changed = false;
-    const tokens = encounter.tokens.map((token) => {
-      const snapped = snapPointToGrid(
-        token.x,
-        token.y,
-        boardWidth,
-        boardHeight,
-        gridSize,
-        tokenSpanCells(token.scale),
-      );
-      if (snapped.x === token.x && snapped.y === token.y) {
-        return token;
-      }
-      changed = true;
-      return { ...token, x: snapped.x, y: snapped.y };
-    });
-    const veils = encounter.veils.map((veil) => {
+    let stagingGround = encounter.stagingGround;
+    let tokens = encounter.tokens;
+    let veils = encounter.veils;
+    if (gridSize !== null) {
+      tokens = encounter.tokens.map((token) => {
+        const snapped = snapPointToGrid(
+          token.x,
+          token.y,
+          boardWidth,
+          boardHeight,
+          gridSize,
+          tokenSpanCells(token.scale),
+        );
+        if (snapped.x === token.x && snapped.y === token.y) {
+          return token;
+        }
+        changed = true;
+        return { ...token, x: snapped.x, y: snapped.y };
+      });
+      veils = encounter.veils.map((veil) => {
+        const snapped = snapBoxToGrid(
+          veil.x,
+          veil.y,
+          boardWidth,
+          boardHeight,
+          gridSize,
+          veil.widthCells,
+          veil.heightCells,
+        );
+        if (snapped.x === veil.x && snapped.y === veil.y) {
+          return veil;
+        }
+        changed = true;
+        return { ...veil, x: snapped.x, y: snapped.y };
+      });
+    }
+    if (stagingGround !== null) {
       const snapped = snapBoxToGrid(
-        veil.x,
-        veil.y,
+        stagingGround.x,
+        stagingGround.y,
         boardWidth,
         boardHeight,
-        gridSize,
-        veil.widthCells,
-        veil.heightCells,
+        cellPx,
+        STAGING_GROUND_CELLS,
+        STAGING_GROUND_CELLS,
       );
-      if (snapped.x === veil.x && snapped.y === veil.y) {
-        return veil;
+      const nextStaging = stagingGroundAt(snapped.x, snapped.y, boardWidth, boardHeight, cellPx);
+      if (
+        nextStaging.x !== stagingGround.x ||
+        nextStaging.y !== stagingGround.y ||
+        nextStaging.cellWidth !== stagingGround.cellWidth ||
+        nextStaging.cellHeight !== stagingGround.cellHeight
+      ) {
+        stagingGround = nextStaging;
+        changed = true;
       }
-      changed = true;
-      return { ...veil, x: snapped.x, y: snapped.y };
-    });
+    }
     if (!changed) {
       return;
     }
-    await this.putEncounter({ ...encounter, tokens, veils });
+    let nextEncounter: EncounterState = { ...encounter, tokens, veils, stagingGround };
+    if (stagingGround !== null) {
+      nextEncounter = {
+        ...repositionPlayersInStagingGround(nextEncounter, this.entities, encounter.sessionId),
+        sessionId: encounter.sessionId,
+      };
+    }
+    await this.putEncounter(nextEncounter);
     this.emit();
   }
 
@@ -1714,6 +1788,21 @@ export class HostStore {
       live: true,
       stage: encounter.stage,
       sessionId: encounter.sessionId,
+    });
+    this.emit();
+  }
+
+  async restoreAllNpcHitPoints(): Promise<void> {
+    const encounter = this.requireTargetEncounter();
+    const next = restoreAllNpcHp(encounter, this.entities);
+    if (next === encounter) {
+      return;
+    }
+    await this.putEncounter({
+      ...next,
+      live: true,
+      sessionId: encounter.sessionId,
+      stage: encounter.stage,
     });
     this.emit();
   }

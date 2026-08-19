@@ -1181,6 +1181,16 @@ h3 {
   width: 100%;
 }
 
+.ai-topic-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-topic-checkbox input[type="checkbox"] {
+  width: auto;
+}
+
 .search-label span,
 .settings label,
 .prep label {
@@ -1405,6 +1415,7 @@ body.is-card-dragging .encounter-roster {
 
 .table-surface {
   --board-stone: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='d' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.46  0 0 0 0 0.45  0 0 0 0 0.43  0 0 0 0.34 0'/%3E%3C/filter%3E%3Crect width='256' height='256' fill='%236e6b66'/%3E%3Crect width='256' height='256' filter='url(%23d)'/%3E%3C/svg%3E");
+  --table-corner-actions-height: calc(var(--tap) * 2 + 8px);
   position: relative;
   height: 100%;
   background-color: #6e6b66;
@@ -1609,6 +1620,24 @@ body.is-card-dragging .encounter-roster {
 
 .veil.is-fog.is-selected {
   z-index: 7;
+  border-color: #c9a227;
+}
+
+.staging-ground {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
+  background: rgb(61 126 166 / 0.7);
+  border: 2px solid rgb(61 126 166 / 0.95);
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  pointer-events: auto;
+}
+
+.staging-ground.is-selected {
+  z-index: 4;
   border-color: #c9a227;
 }
 
@@ -2239,14 +2268,19 @@ body.is-card-dragging .encounter-roster {
   position: absolute;
   top: max(10px, var(--inset-top));
   right: max(10px, env(safe-area-inset-right));
-  z-index: 2;
-  display: flex;
+  z-index: 11;
+  display: grid;
+  grid-template-columns: repeat(4, var(--tap));
+  grid-auto-rows: var(--tap);
   gap: 8px;
   align-items: center;
 }
 
 .board-zoom,
 .board-set-stage,
+.board-set-staging,
+.board-restore-npc-hp,
+.board-add-card,
 .board-reset,
 .lift {
   position: static;
@@ -2271,6 +2305,30 @@ body.is-card-dragging .encounter-roster {
 
 .board-set-stage {
   background: #6b8f3a;
+}
+
+.board-set-staging {
+  background: #3d7ea6;
+}
+
+.board-restore-npc-hp {
+  background: #5a9a5a;
+}
+
+.board-restore-npc-hp:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.board-add-card {
+  background: #8a6a3a;
+  display: grid;
+  place-items: center;
+}
+
+.board-add-card-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .board-reset {
@@ -2309,6 +2367,12 @@ body.is-card-dragging .encounter-roster {
 .board-set-stage-confirm {
   background: #3d7ea6;
   border-color: #3d7ea6;
+  color: #fff;
+}
+
+.board-restore-npc-hp-confirm {
+  background: #5a9a5a;
+  border-color: #5a9a5a;
   color: #fff;
 }
 
@@ -2617,7 +2681,7 @@ body.is-card-dragging .encounter-roster {
 
 .initiative-sidebar {
   position: absolute;
-  top: calc(max(12px, var(--inset-top)) + var(--tap) + 12px);
+  top: calc(max(12px, var(--inset-top)) + var(--table-corner-actions-height) + 12px);
   right: max(10px, env(safe-area-inset-right));
   bottom: max(96px, env(safe-area-inset-bottom));
   z-index: 10;

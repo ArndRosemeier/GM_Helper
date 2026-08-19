@@ -104,6 +104,9 @@ export default defineConfig(({ mode }) => {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  build: {
+    chunkSizeWarningLimit: 4500,
+  },
   optimizeDeps: {
     exclude: ["@3d-dice/dice-box"],
   },

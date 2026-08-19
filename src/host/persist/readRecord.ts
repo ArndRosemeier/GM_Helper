@@ -48,6 +48,7 @@ import {
   type Source,
   type SourceChunk,
   type SourceKind,
+  type StagingGround,
   type Track,
   withDefaultCardCategories,
 } from "../types";
@@ -354,6 +355,7 @@ export function readEncounterBoard(
     initiativeEnabled,
     initiativeOrder,
     stage: readStageSnapshot(record.stage, ownerId, warnings, store),
+    stagingGround: readStagingGround(record.stagingGround, ownerId, warnings, store),
   };
 }
 
@@ -681,7 +683,42 @@ function readStageSnapshot(
     tokenSize: readTokenSize(record.tokenSize, record.gridSize, ownerId, warnings),
     tokens: readTokens(record.tokens, ownerId, warnings, store),
     veils: readVeils(record.veils, ownerId, warnings, store),
+    stagingGround: readStagingGround(record.stagingGround, ownerId, warnings, store),
   };
+}
+
+function readStagingGround(
+  value: unknown,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "encounters" | "entities",
+): StagingGround | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const record = asObject(value, store, ownerId, warnings);
+  if (!record) {
+    warnings.push({ store, id: ownerId, message: "stagingGround was not an object and was cleared" });
+    return null;
+  }
+  const x = record.x;
+  const y = record.y;
+  const cellWidth = record.cellWidth;
+  const cellHeight = record.cellHeight;
+  if (
+    typeof x !== "number" ||
+    typeof y !== "number" ||
+    typeof cellWidth !== "number" ||
+    typeof cellHeight !== "number" ||
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(cellWidth) ||
+    !Number.isFinite(cellHeight)
+  ) {
+    warnings.push({ store, id: ownerId, message: "stagingGround had invalid coordinates and was cleared" });
+    return null;
+  }
+  return { x, y, cellWidth, cellHeight };
 }
 
 function readVeils(

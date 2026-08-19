@@ -30,6 +30,31 @@ export function PdfPageNav({
     commit(next);
   };
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+        return;
+      }
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      if (event.key === "ArrowLeft" && draft > 1) {
+        jump(draft - 1);
+      } else if (event.key === "ArrowRight" && draft < pageCount) {
+        jump(draft + 1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [draft, pageCount]);
+
   return (
     <div className="pdf-page-nav">
       <button type="button" disabled={draft <= 1} onClick={() => jump(draft - 1)} aria-label="Previous page">

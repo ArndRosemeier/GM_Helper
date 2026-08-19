@@ -12,6 +12,8 @@ import {
   ENCOUNTER_TAG,
   NPC_CATEGORY,
   PLAYER_CATEGORY,
+  STAGING_GROUND_CELLS,
+  type StagingGround,
   type BattlegroundToken,
   type EncounterBoard,
   type EncounterBlock,
@@ -34,6 +36,7 @@ export function emptyEncounterBoard(): EncounterBoard {
     initiativeEnabled: false,
     initiativeOrder: [],
     stage: null,
+    stagingGround: null,
   };
 }
 
@@ -53,6 +56,7 @@ export function boardOf(state: EncounterBoard): EncounterBoard {
     initiativeEnabled: state.initiativeEnabled,
     initiativeOrder: state.initiativeOrder,
     stage: state.stage,
+    stagingGround: state.stagingGround,
   };
 }
 
@@ -190,6 +194,102 @@ export function fillTokenCurrentHp(
   return { ...board, tokens };
 }
 
+export function restoreAllNpcHp(
+  board: EncounterBoard,
+  entities: ReadonlyArray<Entity>,
+): EncounterBoard {
+  const byId = new Map(entities.map((entity) => [entity.id, entity]));
+  let changed = false;
+  const tokens = board.tokens.map((token) => {
+    if (token.entityId === null) {
+      return token;
+    }
+    const owner = byId.get(token.entityId);
+    if (owner === undefined || !isNpcCard(owner)) {
+      return token;
+    }
+    const stats = combatStatsFrom(owner.runCard);
+    if (stats === null) {
+      return token;
+    }
+    if (token.currentHp === stats.maxHp) {
+      return token;
+    }
+    changed = true;
+    return { ...token, currentHp: stats.maxHp };
+  });
+  if (!changed) {
+    return board;
+  }
+  return { ...board, tokens };
+}
+
+export function stagingGroundAt(
+  x: number,
+  y: number,
+  boardWidthPx: number,
+  boardHeightPx: number,
+  cellPx: number,
+): StagingGround {
+  if (!(boardWidthPx > 0) || !(boardHeightPx > 0)) {
+    throw new Error("Board size must be positive");
+  }
+  if (!(cellPx > 0)) {
+    throw new Error(`Cell size must be positive, got ${String(cellPx)}`);
+  }
+  return {
+    x,
+    y,
+    cellWidth: cellPx / boardWidthPx,
+    cellHeight: cellPx / boardHeightPx,
+  };
+}
+
+export function spawnPointInStagingGround(
+  playerIndex: number,
+  staging: StagingGround,
+): { x: number; y: number } {
+  const col = playerIndex % STAGING_GROUND_CELLS;
+  const row = Math.floor(playerIndex / STAGING_GROUND_CELLS);
+  const topLeftX = staging.x - (STAGING_GROUND_CELLS / 2) * staging.cellWidth;
+  const topLeftY = staging.y - (STAGING_GROUND_CELLS / 2) * staging.cellHeight;
+  return {
+    x: topLeftX + (col + 0.5) * staging.cellWidth,
+    y: topLeftY + (row + 0.5) * staging.cellHeight,
+  };
+}
+
+export function repositionPlayersInStagingGround(
+  board: EncounterBoard,
+  entities: ReadonlyArray<Entity>,
+  sessionId: SessionId,
+): EncounterBoard {
+  if (board.stagingGround === null) {
+    return board;
+  }
+  const players = playerEntitiesForSession(entities, sessionId);
+  const updated = new Map<BattlegroundToken["id"], BattlegroundToken>();
+  let playerIndex = 0;
+  for (const player of players) {
+    const token = board.tokens.find((item) => item.entityId === player.id);
+    if (token === undefined) {
+      continue;
+    }
+    const at = spawnPointInStagingGround(playerIndex, board.stagingGround);
+    playerIndex += 1;
+    if (token.x !== at.x || token.y !== at.y) {
+      updated.set(token.id, { ...token, x: at.x, y: at.y });
+    }
+  }
+  if (updated.size === 0) {
+    return board;
+  }
+  return {
+    ...board,
+    tokens: board.tokens.map((token) => updated.get(token.id) ?? token),
+  };
+}
+
 export function withFilledEncounterCardHp(
   entities: ReadonlyArray<Entity>,
 ): Entity[] {
@@ -253,6 +353,15 @@ export function captureStageSnapshot(board: EncounterBoard): EncounterStageSnaps
       conditions: [...token.conditions],
     })),
     veils: board.veils.map((veil) => ({ ...veil })),
+    stagingGround:
+      board.stagingGround === null
+        ? null
+        : {
+            x: board.stagingGround.x,
+            y: board.stagingGround.y,
+            cellWidth: board.stagingGround.cellWidth,
+            cellHeight: board.stagingGround.cellHeight,
+          },
   };
 }
 
@@ -267,6 +376,15 @@ export function cloneStageSnapshot(stage: EncounterStageSnapshot): EncounterStag
       conditions: [...token.conditions],
     })),
     veils: stage.veils.map((veil) => ({ ...veil })),
+    stagingGround:
+      stage.stagingGround === null
+        ? null
+        : {
+            x: stage.stagingGround.x,
+            y: stage.stagingGround.y,
+            cellWidth: stage.stagingGround.cellWidth,
+            cellHeight: stage.stagingGround.cellHeight,
+          },
   };
 }
 
@@ -304,12 +422,18 @@ export function ensurePlayerTokens(
   );
   let tokens = [...board.tokens];
   let layoutIndex = cardTokens({ ...board, tokens }).length;
+  let playerIndex = 0;
   for (const player of players) {
     if (present.has(player.id)) {
       continue;
     }
-    tokens.push(tokenFromEntity(player, layoutIndex, board.live, null));
-    layoutIndex++;
+    const at =
+      board.stagingGround === null
+        ? null
+        : spawnPointInStagingGround(playerIndex, board.stagingGround);
+    tokens.push(tokenFromEntity(player, layoutIndex, board.live, at));
+    layoutIndex += 1;
+    playerIndex += 1;
   }
   if (tokens.length === board.tokens.length) {
     return board;
@@ -331,6 +455,15 @@ export function applyStageReset(
     tokenSize: stage.tokenSize,
     tokens,
     veils: stage.veils.map((veil) => ({ ...veil })),
+    stagingGround:
+      stage.stagingGround === null
+        ? null
+        : {
+            x: stage.stagingGround.x,
+            y: stage.stagingGround.y,
+            cellWidth: stage.stagingGround.cellWidth,
+            cellHeight: stage.stagingGround.cellHeight,
+          },
     activeIndex: 0,
     initiativeEnabled: false,
     initiativeOrder: [],
@@ -374,6 +507,15 @@ export function cloneEncounterBoard(board: EncounterBoard): EncounterBoard {
   }));
   return {
     ...boardOf(board),
+    stagingGround:
+      board.stagingGround === null
+        ? null
+        : {
+            x: board.stagingGround.x,
+            y: board.stagingGround.y,
+            cellWidth: board.stagingGround.cellWidth,
+            cellHeight: board.stagingGround.cellHeight,
+          },
     stage: board.stage === null ? null : cloneStageSnapshot(board.stage),
     tokens,
     veils,

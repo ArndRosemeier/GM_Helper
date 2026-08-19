@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cardOriginal, cardTypeLabel } from "../host/cardModel";
 import { combatHpForToken, isEncounterCard, isPlayerCard } from "../host/encounter";
@@ -19,11 +19,14 @@ import {
 import { clipboardReadSupported, readClipboardImage } from "../lib/clipboardImage";
 import { isIntegerDraft, parseIntegerField } from "../lib/integerField";
 import { saveBlobAsFile } from "../lib/saveBlob";
-import { CardPdfReader } from "./CardPdfReader";
 import { CardUrlFrame } from "./CardUrlFrame";
 import { MarkdownText } from "./MarkdownText";
 import { TokenGrabModal } from "./TokenGrabModal";
 import { cardImageUrl } from "../lib/defaultToken";
+
+const CardPdfReader = lazy(() =>
+  import("./CardPdfReader").then((module) => ({ default: module.CardPdfReader })),
+);
 
 export function EntityCard({
   entity,
@@ -509,11 +512,13 @@ export function EntityCard({
           ) : null}
           {original.kind === "url" ? <CardUrlFrame href={original.href} /> : null}
           {original.kind === "pdf" ? (
-            <CardPdfReader
-              sourceId={original.sourceId}
-              bookmarkPage={original.page}
-              topic={entity.runCard.title}
-            />
+            <Suspense fallback={<p className="muted">Opening the PDF…</p>}>
+              <CardPdfReader
+                sourceId={original.sourceId}
+                bookmarkPage={original.page}
+                topic={entity.runCard.title}
+              />
+            </Suspense>
           ) : null}
         </div>
       ) : null}

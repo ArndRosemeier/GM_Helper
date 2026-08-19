@@ -2,8 +2,11 @@ import { useEffect, useState } from "react";
 import { useHost } from "../host/HostContext";
 import type { SourceId } from "../host/ids";
 import { extractPdfImagePng, type PdfPageImage } from "../lib/pdfImages";
+import { clipboardWriteSupported, writeClipboardImage } from "../lib/clipboardImage";
 import { loadPdf, type LoadedPdf } from "../lib/pdfPage";
 import { runAddCardWithAi } from "./aiPdfCard";
+import { AiTopicModal } from "./AiTopicModal";
+import { FlashToast, useFlashToast } from "./FlashToast";
 import { NameCardModal } from "./NameCardModal";
 import { PdfPageNav } from "./PdfPageNav";
 import { PdfPageView } from "./PdfPageView";
@@ -26,6 +29,8 @@ export function CardPdfReader({
   const [page, setPage] = useState(bookmarkPage);
   const [selectedImage, setSelectedImage] = useState<PdfPageImage | null>(null);
   const [pending, setPending] = useState<PendingSave | null>(null);
+  const [aiTopicPending, setAiTopicPending] = useState(false);
+  const { message: flashMessage, flash } = useFlashToast();
   const source = snap.sources.find((item) => item.id === sourceId) ?? null;
   const bytes = source?.kind === "pdf" ? source.bytes : null;
   const offBookmark = page !== bookmarkPage;
@@ -102,13 +107,29 @@ export function CardPdfReader({
     );
   };
 
-  const startAiCard = (): void => {
-    const trimmed = topic.trim();
-    if (trimmed.length === 0) {
-      store.setError("This card has no name to use as the AI topic");
+  const onAddCardWithAi = (): void => {
+    setAiTopicPending(true);
+  };
+
+  const copySelectedImage = (): void => {
+    if (selectedImage === null) {
+      store.setError("Select a picture on this page first");
       return;
     }
-    store.run(runAddCardWithAi(store, source.id, page, trimmed));
+    if (!pdf) {
+      store.setError("PDF page is not on screen yet");
+      return;
+    }
+    const image = selectedImage;
+    const document = pdf.document;
+    const pageNumber = page;
+    store.run(
+      (async () => {
+        const picture = await extractPdfImagePng(await document.getPage(pageNumber), image.objectName);
+        await writeClipboardImage(picture);
+        flash("Image copied");
+      })(),
+    );
   };
 
   return (
@@ -143,12 +164,26 @@ export function CardPdfReader({
                 >
                   Add image card
                 </button>
+                {clipboardWriteSupported() ? (
+                  <button
+                    type="button"
+                    disabled={selectedImage === null}
+                    title={
+                      selectedImage === null
+                        ? "Select a picture on this page first"
+                        : "Copy the selected picture to the clipboard"
+                    }
+                    onClick={copySelectedImage}
+                  >
+                    Copy image
+                  </button>
+                ) : null}
               </>
             ) : null}
             <button
               type="button"
               disabled={snap.busy !== null}
-              onClick={startAiCard}
+              onClick={onAddCardWithAi}
             >
               Add card with AI
             </button>
@@ -175,6 +210,17 @@ export function CardPdfReader({
           onConfirm={confirmSave}
         />
       ) : null}
+      {aiTopicPending ? (
+        <AiTopicModal
+          initialTopic={topic.trim()}
+          onCancel={() => setAiTopicPending(false)}
+          onConfirm={(confirmedTopic, tryGetImage) => {
+            setAiTopicPending(false);
+            store.run(runAddCardWithAi(store, source.id, page, confirmedTopic, tryGetImage));
+          }}
+        />
+      ) : null}
+      <FlashToast message={flashMessage} />
     </div>
   );
 }

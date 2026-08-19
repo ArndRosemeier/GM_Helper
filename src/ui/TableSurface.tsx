@@ -17,14 +17,16 @@ import {
   TOKEN_SIZE_DEFAULT,
   TOKEN_SIZE_MIN,
   TOKEN_STAMP_COLORS,
+  STAGING_GROUND_CELLS,
   VEIL_DEFAULT_CELLS,
   tokenSizeFittingGrid,
   type BattlegroundToken,
   type BattlegroundVeil,
   type Entity,
+  type StagingGround,
   type VeilKind,
 } from "../host/types";
-import { combatHpForToken } from "../host/encounter";
+import { combatHpForToken, isNpcCard } from "../host/encounter";
 import { activeInitiativeTokenId } from "../host/initiative";
 import { snapBoxToGrid, snapPointToGrid, tokenSpanCells } from "../host/gridSnap";
 import { useHost } from "../host/HostContext";
@@ -61,18 +63,23 @@ export function TableSurface() {
   const camera = useBoardPanZoom(viewport, boardOriginRef);
   const [selectedTokenId, setSelectedTokenId] = useState<TokenId | null>(null);
   const [selectedVeilId, setSelectedVeilId] = useState<VeilId | null>(null);
+  const [selectedStagingGround, setSelectedStagingGround] = useState(false);
   const [inspecting, setInspecting] = useState(false);
   const [pickingCard, setPickingCard] = useState(false);
   const placeCardAt = useRef<{ x: number; y: number } | null>(null);
-  const plusButton = useRef<HTMLButtonElement>(null);
+  const addCardButton = useRef<HTMLButtonElement>(null);
+  const cornerActions = useRef<HTMLDivElement>(null);
   const stampsArea = useRef<HTMLDivElement>(null);
   const boardPointerCount = useRef(0);
   const emptyTapStart = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const lastEmptyTap = useRef<{ x: number; y: number; time: number } | null>(null);
+  const lastTokenTap = useRef<{ tokenId: TokenId; x: number; y: number; time: number } | null>(null);
   const dragOrigin = useRef<{ x: number; y: number; tokenId: TokenId } | null>(null);
   const didDrag = useRef(false);
   const veilDragOrigin = useRef<{ x: number; y: number; veilId: VeilId } | null>(null);
   const didVeilDrag = useRef(false);
+  const stagingDragOrigin = useRef<{ x: number; y: number } | null>(null);
+  const didStagingDrag = useRef(false);
   const [mapNatural, setMapNatural] = useState<{
     url: string;
     width: number;
@@ -82,6 +89,7 @@ export function TableSurface() {
   const [stageSetFlash, setStageSetFlash] = useState(false);
   const [setStageConfirmOpen, setSetStageConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [restoreNpcHpConfirmOpen, setRestoreNpcHpConfirmOpen] = useState(false);
   const [combatGlows, setCombatGlows] = useState<
     ReadonlyArray<{ id: string; tokenId: TokenId; kind: "damage" | "heal" }>
   >([]);
@@ -126,10 +134,73 @@ export function TableSurface() {
     store.run(store.resetEncounterBoard());
   };
 
+  const onConfirmRestoreNpcHp = (): void => {
+    setRestoreNpcHpConfirmOpen(false);
+    store.run(store.restoreAllNpcHitPoints());
+  };
+
+  const onSetStagingGround = (): void => {
+    const boardNode = board.current;
+    const viewportNode = viewport.current;
+    if (!boardNode || !viewportNode) {
+      store.setError("Battleground board is not mounted");
+      return;
+    }
+    if (stagingGround !== null) {
+      setSelectedStagingGround(true);
+      setSelectedTokenId(null);
+      setSelectedVeilId(null);
+      setInspecting(false);
+      return;
+    }
+    const cellPx = veilCellPx(
+      snap.tableEncounter?.gridSize ?? null,
+      snap.tableEncounter?.tokenSize ?? TOKEN_SIZE_DEFAULT,
+    );
+    const stagingBoardPx = STAGING_GROUND_CELLS * cellPx;
+    const at = pointLeftOfControl(
+      cornerActions.current,
+      viewportNode,
+      boardNode,
+      camera.view,
+      boardOriginRef.current,
+      stagingBoardPx,
+    );
+    const snapped = snapBoxToGrid(
+      at.x,
+      at.y,
+      boardNode.offsetWidth,
+      boardNode.offsetHeight,
+      cellPx,
+      STAGING_GROUND_CELLS,
+      STAGING_GROUND_CELLS,
+    );
+    store.run(
+      store.setStagingGround(snapped.x, snapped.y, boardNode.offsetWidth, boardNode.offsetHeight),
+    );
+    setSelectedStagingGround(true);
+    setSelectedTokenId(null);
+    setSelectedVeilId(null);
+    setInspecting(false);
+  };
+
+  const hasNpcOnBoard = useMemo(
+    () =>
+      (snap.tableEncounter?.tokens ?? []).some((token) => {
+        if (token.entityId === null) {
+          return false;
+        }
+        const owner = snap.entities.find((item) => item.id === token.entityId);
+        return owner !== undefined && isNpcCard(owner);
+      }),
+    [snap.tableEncounter?.tokens, snap.entities],
+  );
+
   const mapId = snap.tableEncounter?.mapMediaId ?? null;
   const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
   const tokens = (snap.tableEncounter?.tokens ?? []).filter((token) => token.visible);
   const veils = snap.tableEncounter?.veils ?? [];
+  const stagingGround = snap.tableEncounter?.stagingGround ?? null;
   const gridSize = snap.tableEncounter?.gridSize ?? null;
   const unitSize =
     gridSize !== null
@@ -249,7 +320,8 @@ export function TableSurface() {
   useLayoutEffect(() => {
     const node = board.current;
     const gridSize = snap.tableEncounter?.gridSize ?? null;
-    if (!node || gridSize === null) {
+    const hasStaging = snap.tableEncounter?.stagingGround !== null;
+    if (!node || (gridSize === null && !hasStaging)) {
       return;
     }
     const width = node.offsetWidth;
@@ -261,6 +333,8 @@ export function TableSurface() {
   }, [
     store,
     snap.tableEncounter?.gridSize,
+    snap.tableEncounter?.tokenSize,
+    snap.tableEncounter?.stagingGround,
     snap.tableEncounter?.tokens.length,
     snap.tableEncounter?.veils.length,
     snap.openedEncounterEntityId,
@@ -346,8 +420,32 @@ export function TableSurface() {
     }
     dragOrigin.current = null;
     if (!didDrag.current) {
+      const now = performance.now();
+      const previous = lastTokenTap.current;
+      if (
+        previous !== null &&
+        previous.tokenId === tokenId &&
+        now - previous.time <= DOUBLE_TAP_MS &&
+        Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= DOUBLE_TAP_PX
+      ) {
+        lastTokenTap.current = null;
+        setSelectedTokenId(tokenId);
+        setSelectedVeilId(null);
+        setSelectedStagingGround(false);
+        const token = tokens.find((item) => item.id === tokenId);
+        const canInspect =
+          token !== undefined &&
+          token.entityId !== null &&
+          snap.entities.some((item) => item.id === token.entityId);
+        if (canInspect) {
+          setInspecting(true);
+        }
+        return;
+      }
+      lastTokenTap.current = { tokenId, x: event.clientX, y: event.clientY, time: now };
       setSelectedTokenId((current) => (current === tokenId ? null : tokenId));
       setSelectedVeilId(null);
+      setSelectedStagingGround(false);
       setInspecting(false);
     }
   };
@@ -414,6 +512,7 @@ export function TableSurface() {
     if (!didVeilDrag.current) {
       setSelectedVeilId((current) => (current === veilId ? null : veilId));
       setSelectedTokenId(null);
+      setSelectedStagingGround(false);
       setInspecting(false);
     }
   };
@@ -460,6 +559,67 @@ export function TableSurface() {
     }
   };
 
+  const onStagingPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    event.stopPropagation();
+    event.preventDefault();
+    didStagingDrag.current = false;
+    stagingDragOrigin.current = { x: event.clientX, y: event.clientY };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onStagingPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+      return;
+    }
+    const origin = stagingDragOrigin.current;
+    if (origin !== null) {
+      const dx = event.clientX - origin.x;
+      const dy = event.clientY - origin.y;
+      if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+        didStagingDrag.current = true;
+      }
+    }
+    if (!didStagingDrag.current) {
+      return;
+    }
+    const node = board.current;
+    if (!node) {
+      store.setError("Battleground board is not mounted");
+      return;
+    }
+    const raw = requireBoardPoint(event.clientX, event.clientY);
+    if (raw === null) {
+      return;
+    }
+    const cellPx = veilCellPx(
+      snap.tableEncounter?.gridSize ?? null,
+      snap.tableEncounter?.tokenSize ?? TOKEN_SIZE_DEFAULT,
+    );
+    const snapped = snapBoxToGrid(
+      raw.x,
+      raw.y,
+      node.offsetWidth,
+      node.offsetHeight,
+      cellPx,
+      STAGING_GROUND_CELLS,
+      STAGING_GROUND_CELLS,
+    );
+    store.run(store.moveStagingGround(snapped.x, snapped.y, node.offsetWidth, node.offsetHeight));
+  };
+
+  const onStagingPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    stagingDragOrigin.current = null;
+    if (!didStagingDrag.current) {
+      setSelectedStagingGround((current) => !current);
+      setSelectedTokenId(null);
+      setSelectedVeilId(null);
+      setInspecting(false);
+    }
+  };
+
   const openCardPicker = (at: { x: number; y: number } | null): void => {
     placeCardAt.current = at;
     setPickingCard(true);
@@ -475,6 +635,7 @@ export function TableSurface() {
     if (isEmptyBoardTarget(target, event.currentTarget)) {
       setSelectedTokenId(null);
       setSelectedVeilId(null);
+      setSelectedStagingGround(false);
       setInspecting(false);
     }
     camera.onPointerDown(event);
@@ -582,6 +743,16 @@ export function TableSurface() {
                 ...worldLayerStyle,
                 backgroundSize: `${String(gridSize)}px ${String(gridSize)}px`,
               }}
+            />
+          ) : null}
+          {boardReady && stagingGround !== null ? (
+            <BoardStagingGround
+              staging={stagingGround}
+              cellPx={cellPx}
+              selected={selectedStagingGround}
+              onPointerDown={onStagingPointerDown}
+              onPointerMove={onStagingPointerMove}
+              onPointerUp={onStagingPointerUp}
             />
           ) : null}
           {tokens.filter(isStampToken).map((token) => (
@@ -745,9 +916,7 @@ export function TableSurface() {
       {snap.session ? (
         <BoardScaleControls
           compact
-          plusButtonRef={plusButton}
           stampsAreaRef={stampsArea}
-          onPickCard={() => openCardPicker(null)}
           onAddShape={(shape, color) => {
             const viewportNode = viewport.current;
             const boardNode = board.current;
@@ -786,7 +955,7 @@ export function TableSurface() {
       ) : null}
       {dice.hud}
       <InitiativeSidebar coveredTokenIds={coveredCardIds} />
-      <div className="table-corner-actions">
+      <div ref={cornerActions} className="table-corner-actions">
         <button
           type="button"
           className="board-zoom"
@@ -794,14 +963,6 @@ export function TableSurface() {
           onClick={() => camera.zoomBy(1 / 1.25)}
         >
           −
-        </button>
-        <button
-          type="button"
-          className="board-zoom"
-          aria-label="Zoom in"
-          onClick={() => camera.zoomBy(1.25)}
-        >
-          +
         </button>
         <button
           type="button"
@@ -825,6 +986,43 @@ export function TableSurface() {
         <button type="button" className="lift" aria-label="Lift" onClick={() => store.setSurface("gm")}>
           ×
         </button>
+        <button
+          type="button"
+          className="board-zoom"
+          aria-label="Zoom in"
+          onClick={() => camera.zoomBy(1.25)}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          className="board-set-staging"
+          aria-label="Set staging ground"
+          title="Set staging ground"
+          onClick={onSetStagingGround}
+        >
+          ▦
+        </button>
+        <button
+          type="button"
+          className="board-restore-npc-hp"
+          aria-label="Restore NPC hit points"
+          title="Restore NPC hit points"
+          disabled={!hasNpcOnBoard}
+          onClick={() => setRestoreNpcHpConfirmOpen(true)}
+        >
+          ♥
+        </button>
+        <button
+          type="button"
+          ref={addCardButton}
+          className="board-add-card"
+          aria-label="Add card to battleground"
+          title="Add card"
+          onClick={() => openCardPicker(null)}
+        >
+          <CardAddIcon />
+        </button>
       </div>
       {pickingCard
         ? createPortal(
@@ -836,7 +1034,7 @@ export function TableSurface() {
                 const at =
                   placeCardAt.current ??
                   pointBesideControl(
-                    stampsArea.current,
+                    addCardButton.current,
                     viewportNode,
                     boardNode,
                     camera.view,
@@ -909,6 +1107,20 @@ export function TableSurface() {
                 setSetStageConfirmOpen(false);
                 onSetStage();
               }}
+            />,
+            document.body,
+          )
+        : null}
+      {restoreNpcHpConfirmOpen
+        ? createPortal(
+            <BoardConfirmModal
+              titleId="restore-npc-hp-title"
+              title="Restore NPC hit points?"
+              body="Set every NPC on this encounter back to full hit points. Player hit points are not changed."
+              confirmLabel="Restore hit points"
+              confirmClassName="board-restore-npc-hp-confirm"
+              onCancel={() => setRestoreNpcHpConfirmOpen(false)}
+              onConfirm={onConfirmRestoreNpcHp}
             />,
             document.body,
           )
@@ -1223,6 +1435,15 @@ function HealCrossIcon() {
   );
 }
 
+function CardAddIcon() {
+  return (
+    <svg className="board-add-card-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="5" y="3" width="14" height="18" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M9 8h6M9 12h4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function isStampToken(token: BattlegroundToken): boolean {
   return token.shape === "circle" || token.shape === "square";
 }
@@ -1241,6 +1462,41 @@ function veilResizeLabel(kind: VeilKind, edge: VeilEdge): string {
     return `Resize ${piece} from bottom`;
   }
   return `Resize ${piece} from left`;
+}
+
+function BoardStagingGround({
+  staging,
+  cellPx,
+  selected,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+}: {
+  staging: StagingGround;
+  cellPx: number;
+  selected: boolean;
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  const stagingStyle: CSSProperties = {
+    left: `${String(staging.x * 100)}%`,
+    top: `${String(staging.y * 100)}%`,
+    width: `${String(STAGING_GROUND_CELLS * cellPx)}px`,
+    height: `${String(STAGING_GROUND_CELLS * cellPx)}px`,
+  };
+  return (
+    <div
+      className={selected ? "staging-ground is-selected" : "staging-ground"}
+      style={stagingStyle}
+      role="img"
+      aria-label="Player staging ground"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    />
+  );
 }
 
 function BoardVeil({
@@ -1351,6 +1607,36 @@ function VeilFloatControls({
   );
 }
 
+function pointLeftOfControl(
+  control: HTMLElement | null,
+  viewport: HTMLElement | null,
+  board: HTMLDivElement | null,
+  view: BoardView,
+  layoutOrigin: { x: number; y: number },
+  boxBoardPx: number,
+): { x: number; y: number } {
+  if (!control || !viewport || !board) {
+    throw new Error("Battleground board is not mounted");
+  }
+  if (!(boxBoardPx > 0)) {
+    throw new Error("Staging ground size must be positive");
+  }
+  const rect = control.getBoundingClientRect();
+  if (!(rect.width > 0) || !(rect.height > 0)) {
+    throw new Error("Board corner controls have no size");
+  }
+  const mid = clientPointInViewport(viewport, rect.left, rect.top + rect.height / 2);
+  const gapPx = 8;
+  const boxViewportHalfW = (boxBoardPx * view.scale) / 2;
+  return boardPointFromViewport(
+    board,
+    view,
+    layoutOrigin,
+    mid.x - gapPx - boxViewportHalfW,
+    mid.y,
+  );
+}
+
 function pointBesideControl(
   control: HTMLElement | null,
   viewport: HTMLElement | null,
@@ -1427,16 +1713,12 @@ function containInBox(
 
 function BoardScaleControls({
   compact = false,
-  plusButtonRef,
   stampsAreaRef,
-  onPickCard,
   onAddShape,
   onAddCover,
 }: {
   compact?: boolean;
-  plusButtonRef?: RefObject<HTMLButtonElement | null>;
   stampsAreaRef?: RefObject<HTMLDivElement | null>;
-  onPickCard?: () => void;
   onAddShape: (shape: "circle" | "square", color: string) => void;
   onAddCover: (kind: VeilKind) => void;
 }) {
@@ -1510,17 +1792,6 @@ function BoardScaleControls({
           </div>
         ))}
         <div className="board-stamp-column">
-          {onPickCard ? (
-            <button
-              ref={plusButtonRef}
-              type="button"
-              className="board-stamp-add"
-              aria-label="Add card to battleground"
-              onClick={onPickCard}
-            >
-              +
-            </button>
-          ) : null}
           <button
             type="button"
             className="board-stamp-veil"

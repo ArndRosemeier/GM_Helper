@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { HostProvider, useHost } from "./host/HostContext";
 import { HomeShell } from "./ui/HomeShell";
 import { PrepView } from "./ui/PrepView";
@@ -38,7 +39,9 @@ function Surfaces() {
       <div className="gm-root">
         <ErrorBanner />
         <BusyModal />
-        <Player />
+        <Suspense fallback={<p className="muted boot">Loading battleground…</p>}>
+          <Player />
+        </Suspense>
       </div>
     );
   }

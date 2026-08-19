@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { useHost } from "../host/HostContext";
 import { extractPdfImagePng, type PdfPageImage } from "../lib/pdfImages";
+import { clipboardWriteSupported, writeClipboardImage } from "../lib/clipboardImage";
 import { loadPdf, type LoadedPdf } from "../lib/pdfPage";
 import { runAddCardWithAi } from "./aiPdfCard";
+import { AiTopicModal } from "./AiTopicModal";
+import { FlashToast, useFlashToast } from "./FlashToast";
 import { NameCardModal } from "./NameCardModal";
 import { PdfPageNav } from "./PdfPageNav";
 import { PdfPageView } from "./PdfPageView";
@@ -22,6 +25,7 @@ export function SourceViewer() {
   const [viewPage, setViewPage] = useState(view?.page ?? 1);
   const [pending, setPending] = useState<PendingSave | null>(null);
   const [topicPending, setTopicPending] = useState(false);
+  const { message: flashMessage, flash } = useFlashToast();
 
   const source = view ? (snap.sources.find((item) => item.id === view.sourceId) ?? null) : null;
   const sourceId = source?.id ?? null;
@@ -143,21 +147,29 @@ export function SourceViewer() {
     );
   };
 
-  const startAiCard = (topic: string): void => {
-    if (!source || source.kind !== "pdf") {
-      store.setError("AI card is only available for PDF sources");
-      return;
-    }
-    store.run(runAddCardWithAi(store, source.id, viewPage, topic));
+  const onAddCardWithAi = (): void => {
+    setTopicPending(true);
   };
 
-  const onAddCardWithAi = (): void => {
-    const topic = view?.searchQuery?.trim() ?? "";
-    if (topic.length === 0) {
-      setTopicPending(true);
+  const copySelectedImage = (): void => {
+    if (selectedImage === null) {
+      store.setError("Select a picture on this page first");
       return;
     }
-    startAiCard(topic);
+    if (!pdf) {
+      store.setError("PDF page is not on screen yet");
+      return;
+    }
+    const image = selectedImage;
+    const document = pdf.document;
+    const pageNumber = viewPage;
+    store.run(
+      (async () => {
+        const picture = await extractPdfImagePng(await document.getPage(pageNumber), image.objectName);
+        await writeClipboardImage(picture);
+        flash("Image copied");
+      })(),
+    );
   };
 
   return (
@@ -204,6 +216,20 @@ export function SourceViewer() {
               Add image card
             </button>
           ) : null}
+          {source?.kind === "pdf" && clipboardWriteSupported() ? (
+            <button
+              type="button"
+              disabled={selectedImage === null}
+              title={
+                selectedImage === null
+                  ? "Select a picture on this page first"
+                  : "Copy the selected picture to the clipboard"
+              }
+              onClick={copySelectedImage}
+            >
+              Copy image
+            </button>
+          ) : null}
           <button type="button" onClick={() => store.closeSourceView()}>
             Close
           </button>
@@ -234,17 +260,20 @@ export function SourceViewer() {
         />
       ) : null}
       {topicPending ? (
-        <NameCardModal
-          title="What should the AI extract?"
-          fieldLabel="Topic"
-          confirmLabel="Add card with AI"
+        <AiTopicModal
+          initialTopic={view?.searchQuery?.trim() ?? ""}
           onCancel={() => setTopicPending(false)}
-          onConfirm={(topic) => {
+          onConfirm={(topic, tryGetImage) => {
             setTopicPending(false);
-            startAiCard(topic);
+            if (!source || source.kind !== "pdf") {
+              store.setError("AI card is only available for PDF sources");
+              return;
+            }
+            store.run(runAddCardWithAi(store, source.id, viewPage, topic, tryGetImage));
           }}
         />
       ) : null}
+      <FlashToast message={flashMessage} />
     </section>
   );
 }

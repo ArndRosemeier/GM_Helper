@@ -1,5 +1,9 @@
+import { lazy } from "react";
 import type { FeatureModule } from "../../host/features/types";
-import { TableSurface } from "../../ui/TableSurface";
+
+const TableSurface = lazy(() =>
+  import("../../ui/TableSurface").then((module) => ({ default: module.TableSurface })),
+);
 
 export const battlegroundFeature: FeatureModule = {
   id: "battleground",

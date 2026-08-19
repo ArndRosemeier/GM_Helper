@@ -153,6 +153,12 @@ export const SCHEMA_MIGRATIONS: ReadonlyArray<SchemaMigration> = [
     reason: "Encounter boards store a saved stage snapshot for reset.",
     apply: migrate18to19,
   },
+  {
+    from: 19,
+    to: 20,
+    reason: "Encounter boards store a draggable player staging ground.",
+    apply: migrate19to20,
+  },
 ];
 
 export function assertMigrationChain(
@@ -508,6 +514,23 @@ async function migrate17to18(db: GmDb): Promise<ReadonlyArray<MigrationWarning>>
 }
 
 async function migrate18to19(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (next) {
+      await db.put("encounters", next);
+    }
+  }
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      await db.put("entities", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate19to20(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
   const warnings: MigrationWarning[] = [];
   for (const raw of await db.getAll("encounters")) {
     const next = readEncounter(raw, warnings);
