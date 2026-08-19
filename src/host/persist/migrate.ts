@@ -1,6 +1,6 @@
 import type { CampaignExport } from "../types";
 import { withEncounterCategory } from "../types";
-import { fillParticipantCurrentHp, withFilledEncounterCardHp } from "../encounter";
+import { fillTokenCurrentHp, withFilledEncounterCardHp } from "../encounter";
 import type { GmDb } from "../store/db";
 import { SCHEMA_MIGRATIONS } from "./migrations";
 import {
@@ -64,7 +64,7 @@ export function migrateImportedCampaign(value: unknown): {
   const folded = foldScenesIntoEncounters(scenes, encounter ? [encounter] : []);
   const entities = withFilledEncounterCardHp(readList(record.entities, readEntity, warnings));
   const encounters = folded.map((item) => ({
-    ...fillParticipantCurrentHp(item, entities),
+    ...fillTokenCurrentHp(item, entities),
     sessionId: item.sessionId,
   }));
   const payload: CampaignExport = {

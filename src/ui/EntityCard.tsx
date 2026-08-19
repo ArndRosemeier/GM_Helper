@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cardOriginal, cardTypeLabel } from "../host/cardModel";
-import { combatHpForParticipant, isEncounterCard } from "../host/encounter";
+import { combatHpForToken, isEncounterCard } from "../host/encounter";
 import { useHost } from "../host/HostContext";
 import { asSessionId } from "../host/ids";
 import type { FocusCardProps } from "../host/features/types";
-import type { ParticipantId, TrackId } from "../host/ids";
+import type { TokenId, TrackId } from "../host/ids";
 import type { Entity, Source } from "../host/types";
 import { useCardEncounterDrag } from "./useCardEncounterDrag";
 import {
@@ -30,11 +30,11 @@ export function EntityCard({
   revealSecrets,
   expanded: expandedProp,
   onToggleExpand,
-  inspectParticipantId,
+  inspectTokenId,
 }: FocusCardProps & {
   expanded?: boolean;
   onToggleExpand?: () => void;
-  inspectParticipantId?: ParticipantId;
+  inspectTokenId?: TokenId;
 }) {
   const { store, snap } = useHost();
   const facts = factsFrom(entity.runCard);
@@ -43,14 +43,14 @@ export function EntityCard({
   const text = textFrom(entity.runCard);
   const pictures = mediaBlocksFrom(entity.runCard);
   const combat = combatStatsFrom(entity.runCard);
-  const inspectParticipant =
-    inspectParticipantId === undefined
+  const inspectToken =
+    inspectTokenId === undefined
       ? undefined
-      : snap.tableEncounter?.participants.find((item) => item.id === inspectParticipantId);
+      : snap.tableEncounter?.tokens.find((item) => item.id === inspectTokenId);
   const inspectHp =
-    inspectParticipant === undefined
+    inspectToken === undefined
       ? null
-      : combatHpForParticipant(inspectParticipant, entity);
+      : combatHpForToken(inspectToken, entity);
   const displayedCurrentHp = inspectHp !== null ? inspectHp.currentHp : (combat?.currentHp ?? null);
   const hasCombatStats = combat !== null;
   const combatMaxHp = combat?.maxHp;
@@ -149,7 +149,7 @@ export function EntityCard({
   };
 
   const commitInspectCurrentHp = (): void => {
-    if (inspectParticipantId === undefined || inspectHp === null) {
+    if (inspectTokenId === undefined || inspectHp === null) {
       return;
     }
     const currentHp = parseIntegerField(currentHpDraft);
@@ -157,7 +157,7 @@ export function EntityCard({
       setCurrentHpDraft(String(inspectHp.currentHp));
       return;
     }
-    store.run(store.setParticipantCurrentHp(inspectParticipantId, currentHp));
+    store.run(store.setTokenCurrentHp(inspectTokenId, currentHp));
   };
 
   return (

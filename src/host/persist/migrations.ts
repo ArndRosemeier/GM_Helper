@@ -16,7 +16,7 @@ import { SCHEMA_VERSION } from "./schema";
 import type { MigrationWarning } from "./warnings";
 import type { EncounterState, Scene } from "../types";
 import { withEncounterCategory } from "../types";
-import { fillParticipantCurrentHp, withFilledEncounterCardHp } from "../encounter";
+import { fillTokenCurrentHp, withFilledEncounterCardHp } from "../encounter";
 
 /**
  * One step in the document-schema chain.
@@ -134,6 +134,18 @@ export const SCHEMA_MIGRATIONS: ReadonlyArray<SchemaMigration> = [
     to: 16,
     reason: "Veils record a kind so fog of war can cover the board.",
     apply: migrate15to16,
+  },
+  {
+    from: 16,
+    to: 17,
+    reason: "Encounter boards track initiative rolls and turn order.",
+    apply: migrate16to17,
+  },
+  {
+    from: 17,
+    to: 18,
+    reason: "Fighter instance state lives on tokens; participants roster removed.",
+    apply: migrate17to18,
   },
 ];
 
@@ -405,7 +417,7 @@ async function migrate12to13(db: GmDb): Promise<ReadonlyArray<MigrationWarning>>
     if (!next) {
       continue;
     }
-    await db.put("encounters", { ...fillParticipantCurrentHp(next, filled), sessionId: next.sessionId });
+    await db.put("encounters", { ...fillTokenCurrentHp(next, filled), sessionId: next.sessionId });
   }
   return warnings;
 }
@@ -439,6 +451,40 @@ async function migrate14to15(db: GmDb): Promise<ReadonlyArray<MigrationWarning>>
 }
 
 async function migrate15to16(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (next) {
+      await db.put("encounters", next);
+    }
+  }
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      await db.put("entities", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate16to17(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (next) {
+      await db.put("encounters", next);
+    }
+  }
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      await db.put("entities", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate17to18(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
   const warnings: MigrationWarning[] = [];
   for (const raw of await db.getAll("encounters")) {
     const next = readEncounter(raw, warnings);

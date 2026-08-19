@@ -4,13 +4,13 @@ import {
   asEntityId,
   asLogEntryId,
   asMediaId,
-  asParticipantId,
   asSceneId,
   asSessionId,
   asSourceId,
   asTokenId,
   asTrackId,
   asVeilId,
+  type TokenId,
 } from "../ids";
 import { parseAppSettings, type AppSettings } from "../settings";
 import { syncCombatStatsForCategory } from "../runCard";
@@ -32,7 +32,6 @@ import {
   type VeilKind,
   type Campaign,
   type EncounterBoard,
-  type EncounterParticipant,
   type EncounterState,
   type Entity,
   type EntityLifecycle,
@@ -312,22 +311,47 @@ export function readEncounterBoard(
   store: "encounters" | "entities",
 ): EncounterBoard {
   const activeIndex = record.activeIndex;
-  const participants = readParticipants(record.participants, ownerId, warnings, store);
   const index = typeof activeIndex === "number" && Number.isInteger(activeIndex) ? activeIndex : 0;
   const mapMediaId = record.mapMediaId;
   const board = emptyBattleground();
+  let tokens = readTokens(record.tokens, ownerId, warnings, store);
+  const legacyParticipants = readLegacyParticipants(record.participants, ownerId, warnings, store);
+  let participantToTokenId = new Map<string, TokenId>();
+  if (legacyParticipants.length > 0) {
+    const merged = mergeLegacyParticipantsIntoTokens(
+      tokens,
+      legacyParticipants,
+      record.tokens,
+      ownerId,
+      warnings,
+      store,
+    );
+    tokens = merged.tokens;
+    participantToTokenId = merged.participantToTokenId;
+  }
+  const initiativeOrder = readTokenIdList(
+    record.initiativeOrder,
+    ownerId,
+    warnings,
+    store,
+    participantToTokenId,
+  );
+  const initiativeEnabled = record.initiativeEnabled === true;
+  const cardCount = tokens.filter((token) => token.entityId !== null).length;
+  const orderLength = initiativeEnabled ? initiativeOrder.length : cardCount;
   return {
-    participants,
-    activeIndex: participants.length === 0 ? 0 : Math.min(Math.max(0, index), participants.length - 1),
+    activeIndex: orderLength === 0 ? 0 : Math.min(Math.max(0, index), orderLength - 1),
     mapMediaId: typeof mapMediaId === "string" ? asMediaId(mapMediaId) : null,
     live: record.live === true,
-    tokens: readTokens(record.tokens, ownerId, warnings, store),
+    tokens,
     veils: readVeils(record.veils, ownerId, warnings, store),
     gridSize:
       record.gridSize === undefined
         ? board.gridSize
         : readGridSize(record.gridSize, ownerId, warnings),
     tokenSize: readTokenSize(record.tokenSize, record.gridSize, ownerId, warnings),
+    initiativeEnabled,
+    initiativeOrder,
   };
 }
 
@@ -592,7 +616,7 @@ function readTokens(
     } else if (entityIdRaw !== null && entityIdRaw !== undefined) {
       warnings.push({ store, id: ownerId, message: "A token entityId was invalid and was cleared" });
     }
-    const participantId = record.participantId;
+    const participantIdRaw = record.participantId;
     const scaleRaw = record.scale;
     let scale = 1;
     if (typeof scaleRaw === "number" && Number.isFinite(scaleRaw) && scaleRaw > 0) {
@@ -607,10 +631,12 @@ function readTokens(
           : "portrait";
     const colorRaw = record.color;
     const color = typeof colorRaw === "string" && colorRaw.length > 0 ? colorRaw : null;
+    if (typeof participantIdRaw === "string" && participantIdRaw.length > 0) {
+      void participantIdRaw;
+    }
     tokens.push({
       id: asTokenId(id),
       entityId,
-      participantId: typeof participantId === "string" ? asParticipantId(participantId) : null,
       x: typeof record.x === "number" ? record.x : 0.5,
       y: typeof record.y === "number" ? record.y : 0.5,
       visible: record.visible === false ? false : true,
@@ -618,6 +644,11 @@ function readTokens(
       scale,
       shape,
       color,
+      currentHp: readOptionalCombatInteger(record.currentHp, ownerId, warnings, store),
+      initiativeRoll: readOptionalInitiativeInteger(record.initiativeRoll, ownerId, warnings, store),
+      initiativeBonus: readOptionalInitiativeInteger(record.initiativeBonus, ownerId, warnings, store),
+      tracks: readTracks(record.tracks, ownerId, warnings),
+      conditions: readStringList(record.conditions, store, ownerId, "conditions", warnings),
     });
   }
   return tokens;
@@ -699,19 +730,19 @@ function readVeilCells(
   return value;
 }
 
-function readParticipants(
+function readLegacyParticipants(
   value: unknown,
   ownerId: string,
   warnings: MigrationWarning[],
   store: "encounters" | "entities" = "encounters",
-): EncounterParticipant[] {
+): LegacyParticipant[] {
   if (!Array.isArray(value)) {
     if (value !== undefined) {
       warnings.push({ store, id: ownerId, message: "participants was not a list" });
     }
     return [];
   }
-  const participants: EncounterParticipant[] = [];
+  const participants: LegacyParticipant[] = [];
   for (const item of value) {
     if (typeof item !== "object" || item === null) {
       warnings.push({ store, id: ownerId, message: "A participant was not an object and was dropped" });
@@ -733,12 +764,14 @@ function readParticipants(
       }
     }
     participants.push({
-      id: asParticipantId(id),
+      id,
       entityId: asEntityId(entityId),
       label: typeof record.label === "string" ? record.label : "Participant",
       tracks: readTracks(record.tracks, ownerId, warnings),
       conditions,
       currentHp: readOptionalCombatInteger(record.currentHp, ownerId, warnings, store),
+      initiativeRoll: readOptionalInitiativeInteger(record.initiativeRoll, ownerId, warnings, store),
+      initiativeBonus: readOptionalInitiativeInteger(record.initiativeBonus, ownerId, warnings, store),
     });
   }
   return participants;
@@ -885,7 +918,7 @@ function readOptionalCombatInteger(
   value: unknown,
   ownerId: string,
   warnings: MigrationWarning[],
-  store: "encounters" | "entities",
+  store: "encounters" | "entities" | "scenes",
 ): number | null {
   if (value === undefined || value === null) {
     return null;
@@ -899,4 +932,152 @@ function readOptionalCombatInteger(
     message: "participant.currentHp was not a whole number and was cleared",
   });
   return null;
+}
+
+function readOptionalInitiativeInteger(
+  value: unknown,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "encounters" | "entities" | "scenes",
+): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+  warnings.push({
+    store,
+    id: ownerId,
+    message: "participant initiative value was not a whole number and was cleared",
+  });
+  return null;
+}
+
+function readTokenIdList(
+  value: unknown,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "encounters" | "entities",
+  participantToTokenId: ReadonlyMap<string, TokenId>,
+): TokenId[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    warnings.push({ store, id: ownerId, message: "initiativeOrder was not a list and was cleared" });
+    return [];
+  }
+  const ids: TokenId[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || item.length === 0) {
+      warnings.push({ store, id: ownerId, message: "An initiativeOrder entry was dropped" });
+      continue;
+    }
+    const mapped = participantToTokenId.get(item);
+    ids.push(mapped ?? asTokenId(item));
+  }
+  return ids;
+}
+
+type LegacyParticipant = {
+  id: string;
+  entityId: ReturnType<typeof asEntityId>;
+  label: string;
+  tracks: Track[];
+  conditions: string[];
+  currentHp: number | null;
+  initiativeRoll: number | null;
+  initiativeBonus: number | null;
+};
+
+function mergeLegacyParticipantsIntoTokens(
+  tokens: BattlegroundToken[],
+  participants: ReadonlyArray<LegacyParticipant>,
+  rawTokens: unknown,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "encounters" | "entities",
+): { tokens: BattlegroundToken[]; participantToTokenId: Map<string, TokenId> } {
+  const participantIdByTokenId = new Map<string, string>();
+  if (Array.isArray(rawTokens)) {
+    for (const item of rawTokens) {
+      if (typeof item !== "object" || item === null) {
+        continue;
+      }
+      const record = item as Record<string, unknown>;
+      const tokenId = typeof record.id === "string" ? record.id : null;
+      const participantId = typeof record.participantId === "string" ? record.participantId : null;
+      if (tokenId !== null && participantId !== null) {
+        participantIdByTokenId.set(tokenId, participantId);
+      }
+    }
+  }
+
+  const next = tokens.map((token) => ({ ...token }));
+  const participantToTokenId = new Map<string, TokenId>();
+  const claimedTokenIds = new Set<TokenId>();
+
+  for (const participant of participants) {
+    let tokenIndex = next.findIndex(
+      (token) => participantIdByTokenId.get(token.id) === participant.id,
+    );
+    if (tokenIndex < 0) {
+      tokenIndex = next.findIndex(
+        (token) =>
+          token.entityId === participant.entityId &&
+          !claimedTokenIds.has(token.id),
+      );
+    }
+    if (tokenIndex >= 0) {
+      next[tokenIndex] = applyLegacyParticipant(next[tokenIndex]!, participant);
+      participantToTokenId.set(participant.id, next[tokenIndex]!.id);
+      claimedTokenIds.add(next[tokenIndex]!.id);
+      continue;
+    }
+    warnings.push({
+      store,
+      id: ownerId,
+      message: `Participant ${participant.id} had no token and was materialized`,
+    });
+    const created = applyLegacyParticipant(
+      {
+        id: asTokenId(participant.id),
+        entityId: participant.entityId,
+        x: 0.5,
+        y: 0.5,
+        visible: true,
+        label: participant.label,
+        scale: 1,
+        shape: "portrait",
+        color: null,
+        currentHp: null,
+        initiativeRoll: null,
+        initiativeBonus: null,
+        tracks: [],
+        conditions: [],
+      },
+      participant,
+    );
+    next.push(created);
+    participantToTokenId.set(participant.id, created.id);
+    claimedTokenIds.add(created.id);
+  }
+
+  return { tokens: next, participantToTokenId };
+}
+
+function applyLegacyParticipant(
+  token: BattlegroundToken,
+  participant: LegacyParticipant,
+): BattlegroundToken {
+  return {
+    ...token,
+    label: participant.label,
+    currentHp: participant.currentHp ?? token.currentHp,
+    initiativeRoll: participant.initiativeRoll ?? token.initiativeRoll,
+    initiativeBonus: participant.initiativeBonus ?? token.initiativeBonus,
+    tracks: participant.tracks.length > 0 ? participant.tracks : token.tracks,
+    conditions: participant.conditions.length > 0 ? participant.conditions : token.conditions,
+  };
 }

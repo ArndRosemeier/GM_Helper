@@ -1,4 +1,4 @@
-import { battlemapTitleForMedia, isPlayerCard } from "../host/encounter";
+import { battlemapTitleForMedia, cardTokens, isPlayerCard } from "../host/encounter";
 import { useHost } from "../host/HostContext";
 import { cardImageUrl } from "../lib/defaultToken";
 
@@ -6,17 +6,17 @@ import { cardImageUrl } from "../lib/defaultToken";
 
 export function EncounterAmbient() {
   const { store, snap } = useHost();
-  const participants = snap.encounter?.participants ?? [];
+  const cards = snap.encounter ? cardTokens(snap.encounter) : [];
   const mapId = snap.encounter?.mapMediaId ?? null;
   const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
   const mapTitle = battlemapTitleForMedia(snap.entities, mapId) ?? "Map";
-  const empty = mapId === null && participants.length === 0;
+  const empty = mapId === null && cards.length === 0;
   const canClear =
     mapId !== null ||
     (snap.encounter?.tokens.length ?? 0) > 0 ||
     snap.encounter?.live === true ||
-    participants.some((participant) => {
-      const owner = snap.entities.find((item) => item.id === participant.entityId);
+    cards.some((token) => {
+      const owner = snap.entities.find((item) => item.id === token.entityId);
       return owner === undefined || !isPlayerCard(owner);
     });
   return (
@@ -46,18 +46,18 @@ export function EncounterAmbient() {
                 </button>
               </li>
             ) : null}
-            {participants.map((participant) => {
-              const owner = snap.entities.find((item) => item.id === participant.entityId);
+            {cards.map((token) => {
+              const owner = snap.entities.find((item) => item.id === token.entityId);
               const art = owner ? cardImageUrl(owner, snap.mediaUrls) : null;
               return (
-                <li key={participant.id} className="encounter-chip">
+                <li key={token.id} className="encounter-chip">
                   {art ? <img className="card-token" src={art} alt="" /> : null}
-                  <span>{participant.label}</span>
+                  <span>{token.label}</span>
                   <button
                     type="button"
                     className="tiny"
-                    aria-label={`Remove ${participant.label}`}
-                    onClick={() => store.run(store.removeParticipant(participant.id))}
+                    aria-label={`Remove ${token.label}`}
+                    onClick={() => store.run(store.removeEncounterToken(token.id))}
                   >
                     ×
                   </button>
@@ -70,7 +70,7 @@ export function EncounterAmbient() {
       <div className="encounter-define-actions">
         <button
           type="button"
-          disabled={participants.length === 0 && mapId === null}
+          disabled={cards.length === 0 && mapId === null}
           onClick={() => store.run(store.addEncounterAsCard())}
         >
           Add as card
@@ -85,7 +85,7 @@ export function EncounterAmbient() {
         <button
           type="button"
           className="next-turn"
-          disabled={participants.length === 0}
+          disabled={cards.length === 0}
           onClick={() => store.run(store.beginEncounter())}
         >
           Show Encounter

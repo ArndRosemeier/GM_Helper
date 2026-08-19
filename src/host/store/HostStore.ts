@@ -6,7 +6,6 @@ import {
   newChunkId,
   newEntityId,
   newMediaId,
-  newParticipantId,
   newSessionId,
   newSourceId,
   newTokenId,
@@ -15,7 +14,6 @@ import {
   type ChunkId,
   type EntityId,
   type MediaId,
-  type ParticipantId,
   type SessionId,
   type SourceId,
   type TokenId,
@@ -46,7 +44,6 @@ import {
   type BusyStatus,
   type Campaign,
   type EncounterBoard,
-  type EncounterParticipant,
   type EncounterState,
   type Entity,
   type MediaRecord,
@@ -68,17 +65,30 @@ import {
   battlemapTitleForMedia,
   boardOf,
   cardReferencedMediaIds,
+  cardTokens,
   cloneEncounterBoard,
-  combatHpForParticipant,
+  combatHpForToken,
+  emptyTokenInstanceFields,
   encounterCardTitle,
   encounterFromCard,
-  instanceCurrentHpFor,
   isEncounterCard,
+  isFighterEntity,
   isPlayerCard,
   scrubEntityFromBoard,
+  tokenFromEntity,
   withEncounterBlock,
-  withParticipantHpOwnership,
+  withTokenHpOwnership,
 } from "../encounter";
+import {
+  adjustActiveIndexForOrder,
+  clearTokenInitiative,
+  initiativeBonusForEntity,
+  pruneInitiativeToVisibleFighters,
+  removeTokenFromInitiativeOrder,
+  rollInitiativeD20,
+  sortInitiativeOrder,
+  visibleFighterTokenIds,
+} from "../initiative";
 import { snapBoxToGrid, snapPointToGrid, tokenSpanCells } from "../gridSnap";
 import { SCHEMA_META_KEY } from "../persist/schema";
 import {
@@ -118,14 +128,12 @@ import { yieldToUi } from "../../lib/yieldToUi";
 import { createCatalog, rebuildCatalog, searchCatalog, type SearchDoc } from "../search/catalog";
 import {
   adjustTrackInCard,
-  cloneTracks,
   mediaBlocksFrom,
   mediaFrom,
   newTrack,
   provenanceFrom,
   replaceTracks,
   textFrom,
-  tracksFrom,
   withFacts,
   withMedia,
   withoutMediaId,
@@ -513,7 +521,7 @@ export class HostStore {
       return;
     }
     await this.updateRunCard(id, withCategory(entity.runCard, next));
-    await this.syncParticipantHpOwnership(id, combatStatsFrom(entity.runCard)?.currentHp ?? null);
+    await this.syncTokenHpOwnership(id, combatStatsFrom(entity.runCard)?.currentHp ?? null);
   }
 
   async setEntityCombatStats(
@@ -553,17 +561,17 @@ export class HostStore {
     );
   }
 
-  async setParticipantCurrentHp(participantId: ParticipantId, currentHp: number): Promise<void> {
+  async setTokenCurrentHp(tokenId: TokenId, currentHp: number): Promise<void> {
     if (!Number.isInteger(currentHp)) {
       this.setErrorAndThrow("Current HP must be a whole number");
     }
     const encounter = this.requireTargetEncounter();
-    const participant = encounter.participants.find((item) => item.id === participantId);
-    if (!participant) {
-      this.setErrorAndThrow("Encounter has no such participant");
+    const token = encounter.tokens.find((item) => item.id === tokenId);
+    if (token === undefined || token.entityId === null) {
+      this.setErrorAndThrow("Encounter has no such fighter token");
     }
-    const owner = this.requireEntity(participant.entityId);
-    const hp = combatHpForParticipant(participant, owner);
+    const owner = this.requireEntity(token.entityId);
+    const hp = combatHpForToken(token, owner);
     if (hp === null) {
       this.setErrorAndThrow(`“${owner.runCard.title}” has no hit points`);
     }
@@ -580,8 +588,8 @@ export class HostStore {
     }
     await this.putEncounter({
       ...encounter,
-      participants: encounter.participants.map((item) =>
-        item.id === participantId ? { ...item, currentHp } : item,
+      tokens: encounter.tokens.map((item) =>
+        item.id === tokenId ? { ...item, currentHp } : item,
       ),
     });
     this.emit();
@@ -620,7 +628,7 @@ export class HostStore {
     if (this.encounter) {
       const next = scrubEntityFromBoard(this.encounter, id);
       if (next !== this.encounter) {
-        if (next.participants.length === 0 && this.encounter.participants.length > 0) {
+        if (cardTokens(next).length === 0 && cardTokens(this.encounter).length > 0) {
           await this.endEncounter();
         } else {
           await this.putEncounter(
@@ -1305,18 +1313,12 @@ export class HostStore {
     if (at !== null && (!Number.isFinite(at.x) || !Number.isFinite(at.y))) {
       this.setErrorAndThrow("Token position must be a finite board coordinate");
     }
-    const token: BattlegroundToken = {
-      id: newTokenId(),
-      entityId,
-      participantId: null,
-      x: at === null ? 0.35 + Math.random() * 0.3 : at.x,
-      y: at === null ? 0.35 + Math.random() * 0.3 : at.y,
+    const token = tokenFromEntity(
+      entity,
+      encounter.tokens.length,
       visible,
-      label: entity.runCard.title,
-      scale: 1,
-      shape: "portrait",
-      color: null,
-    };
+      at,
+    );
     await this.putEncounter({
       ...encounter,
       tokens: [...encounter.tokens, token],
@@ -1338,7 +1340,6 @@ export class HostStore {
     const token: BattlegroundToken = {
       id: newTokenId(),
       entityId: null,
-      participantId: null,
       x,
       y,
       visible: true,
@@ -1346,6 +1347,7 @@ export class HostStore {
       scale: 1,
       shape,
       color,
+      ...emptyTokenInstanceFields(),
     };
     await this.putEncounter({
       ...encounter,
@@ -1486,18 +1488,21 @@ export class HostStore {
     if (!token) {
       this.setErrorAndThrow(`Encounter has no token ${tokenId}`);
     }
-    let participants = encounter.participants;
-    let activeIndex = encounter.activeIndex;
-    if (token.participantId !== null) {
-      participants = participants.filter((item) => item.id !== token.participantId);
-      activeIndex =
-        participants.length === 0 ? 0 : Math.min(activeIndex, participants.length - 1);
+    const initiativeOrder = removeTokenFromInitiativeOrder(encounter.initiativeOrder, tokenId);
+    const activeIndex =
+      initiativeOrder.length === 0
+        ? 0
+        : adjustActiveIndexForOrder(initiativeOrder, encounter.initiativeOrder, encounter.activeIndex);
+    const tokens = encounter.tokens.filter((item) => item.id !== tokenId);
+    if (cardTokens({ ...encounter, tokens }).length === 0 && encounter.mapMediaId === null) {
+      await this.endEncounter();
+      return;
     }
     await this.putEncounter({
       ...encounter,
-      participants,
+      initiativeOrder,
       activeIndex,
-      tokens: encounter.tokens.filter((item) => item.id !== tokenId),
+      tokens,
     });
     this.emit();
   }
@@ -1609,13 +1614,13 @@ export class HostStore {
       await this.dropOnEncounter(entityId);
       return;
     }
-    const extra = this.participantFromEntity(entityId);
     const existing = this.encounter;
+    const token = tokenFromEntity(entity, existing?.tokens.length ?? 0, existing?.live === true, null);
     if (!existing) {
       await this.putEncounter(
         {
           ...emptyEncounter(this.requireSessionId()),
-          participants: [extra],
+          tokens: [token],
         },
         { kind: "session" },
       );
@@ -1625,10 +1630,7 @@ export class HostStore {
     await this.putEncounter(
       {
         ...existing,
-        participants: [...existing.participants, extra],
-        tokens: existing.live
-          ? [...existing.tokens, this.tokenForParticipant(extra, existing.tokens.length)]
-          : existing.tokens,
+        tokens: [...existing.tokens, token],
       },
       { kind: "session" },
     );
@@ -1640,10 +1642,10 @@ export class HostStore {
     if (!encounter) {
       this.setErrorAndThrow("Encounter has no one in it");
     }
-    const live = this.liveBoard(encounter);
-    if (live.participants.length === 0) {
+    if (cardTokens(encounter).length === 0) {
       this.setErrorAndThrow("Encounter has no one in it");
     }
+    const live = this.liveBoard(encounter);
     this.openedEncounterEntityId = null;
     await this.putEncounter(live, { kind: "session" });
     this.setSurface("table");
@@ -1651,9 +1653,16 @@ export class HostStore {
 
   async resetEncounterBoard(): Promise<void> {
     const encounter = this.requireTargetEncounter();
-    if (encounter.participants.length === 0) {
+    if (cardTokens(encounter).length === 0) {
       this.setErrorAndThrow("Encounter has no one in it");
     }
+    const stamps = encounter.tokens.filter((token) => token.entityId === null);
+    const cards = cardTokens(encounter).map((token, index) => ({
+      ...token,
+      x: 0.18 + (index % 5) * 0.14,
+      y: 0.22 + Math.floor(index / 5) * 0.16,
+      visible: true,
+    }));
     await this.putEncounter({
       ...encounter,
       activeIndex: 0,
@@ -1662,7 +1671,7 @@ export class HostStore {
         encounter.gridSize === null
           ? encounter.tokenSize
           : tokenSizeFittingGrid(encounter.gridSize),
-      tokens: this.tokensFromRoster(encounter, encounter.participants, false),
+      tokens: [...cards, ...stamps],
       veils: [],
     });
     this.emit();
@@ -1704,50 +1713,121 @@ export class HostStore {
     this.emit();
   }
 
-  async removeParticipant(participantId: ParticipantId): Promise<void> {
-    const existing = this.requireEncounter();
-    const participants = existing.participants.filter((item) => item.id !== participantId);
-    if (participants.length === 0) {
-      await this.endEncounter();
+  async removeEncounterToken(tokenId: TokenId): Promise<void> {
+    await this.removeToken(tokenId);
+  }
+
+  async setInitiativeEnabled(enabled: boolean, coveredTokenIds: ReadonlyArray<TokenId>): Promise<void> {
+    const existing = this.requireTargetEncounter();
+    if (!enabled) {
+      await this.putEncounter({
+        ...existing,
+        initiativeEnabled: false,
+        initiativeOrder: [],
+        activeIndex: 0,
+        tokens: clearTokenInitiative(existing.tokens),
+      });
+      this.emit();
       return;
     }
-    await this.putEncounter(
-      {
-        ...existing,
-        participants,
-        activeIndex: Math.min(existing.activeIndex, participants.length - 1),
-        tokens: existing.tokens.filter((token) => token.participantId !== participantId),
-      },
-      { kind: "session" },
-    );
+    const covered = new Set(coveredTokenIds);
+    let encounter: EncounterState = {
+      ...existing,
+      initiativeEnabled: true,
+      initiativeOrder: [],
+      activeIndex: 0,
+      tokens: clearTokenInitiative(existing.tokens),
+    };
+    encounter = this.reconcileInitiative(encounter, covered);
+    await this.putEncounter(encounter);
+    this.emit();
+  }
+
+  async syncInitiativeRolls(coveredTokenIds: ReadonlyArray<TokenId>): Promise<void> {
+    const existing = this.requireTargetEncounter();
+    if (!existing.initiativeEnabled) {
+      return;
+    }
+    const covered = new Set(coveredTokenIds);
+    const encounter = this.reconcileInitiative(existing, covered);
+    if (encounter !== existing) {
+      await this.putEncounter(encounter);
+      this.emit();
+    }
+  }
+
+  async reorderInitiative(fromIndex: number, toIndex: number): Promise<void> {
+    const existing = this.requireTargetEncounter();
+    if (!existing.initiativeEnabled) {
+      this.setErrorAndThrow("Initiative is not active");
+    }
+    if (
+      !Number.isInteger(fromIndex) ||
+      !Number.isInteger(toIndex) ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= existing.initiativeOrder.length ||
+      toIndex >= existing.initiativeOrder.length
+    ) {
+      this.setErrorAndThrow("Initiative reorder indices are out of range");
+    }
+    const order = [...existing.initiativeOrder];
+    const [moved] = order.splice(fromIndex, 1);
+    if (moved === undefined) {
+      this.setErrorAndThrow("Initiative reorder source is missing");
+    }
+    order.splice(toIndex, 0, moved);
+    await this.putEncounter({
+      ...existing,
+      initiativeOrder: order,
+      activeIndex: adjustActiveIndexForOrder(order, existing.initiativeOrder, existing.activeIndex),
+    });
     this.emit();
   }
 
   async nextTurn(): Promise<void> {
     const existing = this.requireTargetEncounter();
-    if (existing.participants.length === 0) {
-      this.setErrorAndThrow("Encounter has no participants");
+    if (existing.initiativeEnabled) {
+      if (existing.initiativeOrder.length === 0) {
+        this.setErrorAndThrow("Initiative has no entries");
+      }
+      const nextIndex = (existing.activeIndex + 1) % existing.initiativeOrder.length;
+      await this.putEncounter({ ...existing, activeIndex: nextIndex });
+      const activeId = existing.initiativeOrder[nextIndex];
+      const active =
+        activeId === undefined
+          ? null
+          : (existing.tokens.find((token) => token.id === activeId) ?? null);
+      if (active !== null && active.entityId !== null) {
+        this.focusEntityId = active.entityId;
+      }
+      this.emit();
+      return;
     }
-    const nextIndex = (existing.activeIndex + 1) % existing.participants.length;
+    const cards = cardTokens(existing);
+    if (cards.length === 0) {
+      this.setErrorAndThrow("Encounter has no cards");
+    }
+    const nextIndex = (existing.activeIndex + 1) % cards.length;
     await this.putEncounter({ ...existing, activeIndex: nextIndex });
-    const active = existing.participants[nextIndex];
-    if (active) {
+    const active = cards[nextIndex];
+    if (active?.entityId !== null && active?.entityId !== undefined) {
       this.focusEntityId = active.entityId;
     }
     this.emit();
   }
 
-  async adjustParticipantTrack(participantId: ParticipantId, trackId: TrackId, delta: number): Promise<void> {
+  async adjustTokenTrack(tokenId: TokenId, trackId: TrackId, delta: number): Promise<void> {
     const existing = this.requireTargetEncounter();
     await this.putEncounter({
       ...existing,
-      participants: existing.participants.map((participant) => {
-        if (participant.id !== participantId) {
-          return participant;
+      tokens: existing.tokens.map((token) => {
+        if (token.id !== tokenId) {
+          return token;
         }
         return {
-          ...participant,
-          tracks: participant.tracks.map((track) => {
+          ...token,
+          tracks: token.tracks.map((track) => {
             if (track.id !== trackId) {
               return track;
             }
@@ -1761,25 +1841,28 @@ export class HostStore {
     this.emit();
   }
 
-  async addParticipantTrack(participantId: ParticipantId, label: string, max: number | null): Promise<void> {
+  async addTokenTrack(tokenId: TokenId, label: string, max: number | null): Promise<void> {
     const existing = this.requireTargetEncounter();
     await this.putEncounter({
       ...existing,
-      participants: existing.participants.map((participant) =>
-        participant.id === participantId
-          ? { ...participant, tracks: [...participant.tracks, newTrack(label, max ?? 0, max)] }
-          : participant,
+      tokens: existing.tokens.map((token) =>
+        token.id === tokenId
+          ? { ...token, tracks: [...token.tracks, newTrack(label, max ?? 0, max)] }
+          : token,
       ),
     });
     this.emit();
   }
 
   async clearEncounter(): Promise<void> {
-    const participants = (this.encounter?.participants ?? []).filter((participant) => {
-      const owner = this.entities.find((item) => item.id === participant.entityId);
+    const tokens = (this.encounter?.tokens ?? []).filter((token) => {
+      if (token.entityId === null) {
+        return false;
+      }
+      const owner = this.entities.find((item) => item.id === token.entityId);
       return owner !== undefined && isPlayerCard(owner);
     });
-    if (participants.length === 0) {
+    if (tokens.length === 0) {
       if (this.encounter) {
         await this.endEncounter();
       }
@@ -1788,7 +1871,7 @@ export class HostStore {
     await this.putEncounter(
       {
         ...emptyEncounter(this.requireSessionId()),
-        participants,
+        tokens,
       },
       { kind: "session" },
     );
@@ -1805,8 +1888,8 @@ export class HostStore {
 
   async addEncounterAsCard(): Promise<Entity> {
     const encounter = this.encounter;
-    if (!encounter || (encounter.participants.length === 0 && encounter.mapMediaId === null)) {
-      this.setErrorAndThrow("Encounter has no map or participants");
+    if (!encounter || (cardTokens(encounter).length === 0 && encounter.mapMediaId === null)) {
+      this.setErrorAndThrow("Encounter has no map or cards");
     }
     await this.ensureEncounterCategory();
     if (!this.categoryFilters.includes(ENCOUNTER_CATEGORY)) {
@@ -1836,9 +1919,9 @@ export class HostStore {
     }
     const sessionId = entity.sessionId ?? this.requireSessionId();
     let next: EncounterState = { ...board, sessionId };
-    if (!next.live && next.participants.length > 0) {
+    if (!next.live && cardTokens(next).length > 0) {
       const live = this.liveBoard(next);
-      if (live.participants.length > 0) {
+      if (cardTokens(live).length > 0) {
         next = live;
         await this.putEncounter(next, { kind: "card", entityId: id });
       }
@@ -2423,9 +2506,13 @@ export class HostStore {
 
   private liveBoard(encounter: EncounterState): EncounterState {
     let mapMediaId = encounter.mapMediaId;
-    const fighters: EncounterParticipant[] = [];
-    for (const participant of encounter.participants) {
-      const entity = this.entities.find((item) => item.id === participant.entityId) ?? null;
+    const tokens: BattlegroundToken[] = [];
+    for (const token of encounter.tokens) {
+      if (token.entityId === null) {
+        tokens.push(token);
+        continue;
+      }
+      const entity = this.entities.find((item) => item.id === token.entityId) ?? null;
       if (entity !== null && isMapCard(entity)) {
         const mediaId = mapMediaIdFromCard(entity);
         if (mediaId !== null) {
@@ -2433,28 +2520,19 @@ export class HostStore {
         }
         continue;
       }
-      fighters.push(participant);
+      tokens.push({ ...token, visible: true });
     }
-    if (fighters.length === 0) {
-      return { ...encounter, participants: [], mapMediaId };
+    if (cardTokens({ ...encounter, tokens }).length === 0) {
+      return { ...encounter, tokens, mapMediaId };
     }
-    const fighterEntityIds = new Set(fighters.map((fighter) => fighter.entityId));
-    const kept = encounter.tokens.filter(
-      (token) =>
-        token.entityId === null ||
-        (token.participantId === null &&
-          token.entityId !== null &&
-          !fighterEntityIds.has(token.entityId)),
-    );
     const gridSize = encounter.gridSize ?? GRID_SIZE_DEFAULT;
     const tokenSize = encounter.live ? encounter.tokenSize : tokenSizeFittingGrid(gridSize);
     return {
       ...encounter,
-      participants: fighters,
       mapMediaId,
       live: true,
       tokenSize,
-      tokens: [...this.tokensFromRoster(encounter, fighters, true), ...kept],
+      tokens,
     };
   }
 
@@ -2526,15 +2604,42 @@ export class HostStore {
     return encounter;
   }
 
-  private participantFromEntity(entityId: EntityId): EncounterParticipant {
-    const entity = this.requireEntity(entityId);
+  private reconcileInitiative(
+    encounter: EncounterState,
+    coveredTokenIds: ReadonlySet<TokenId>,
+  ): EncounterState {
+    let next = pruneInitiativeToVisibleFighters(encounter, this.entities, coveredTokenIds);
+    for (const tokenId of visibleFighterTokenIds(next, this.entities, coveredTokenIds)) {
+      next = this.applyInitiativeRoll(next, tokenId);
+    }
+    return next;
+  }
+
+  private applyInitiativeRoll(encounter: EncounterState, tokenId: TokenId): EncounterState {
+    const token = encounter.tokens.find((item) => item.id === tokenId);
+    if (token === undefined || token.entityId === null) {
+      return encounter;
+    }
+    if (token.initiativeRoll !== null) {
+      return encounter;
+    }
+    const entity = this.entities.find((item) => item.id === token.entityId);
+    if (entity === undefined || !isFighterEntity(entity)) {
+      return encounter;
+    }
+    const roll = rollInitiativeD20();
+    const bonus = initiativeBonusForEntity(entity);
+    const tokens = encounter.tokens.map((item) =>
+      item.id === tokenId ? { ...item, initiativeRoll: roll, initiativeBonus: bonus } : item,
+    );
+    let order = encounter.initiativeOrder.includes(tokenId)
+      ? [...encounter.initiativeOrder]
+      : [...encounter.initiativeOrder, tokenId];
+    order = sortInitiativeOrder(order, tokens);
     return {
-      id: newParticipantId(),
-      entityId,
-      label: entity.runCard.title,
-      tracks: cloneTracks(tracksFrom(entity.runCard)),
-      conditions: [],
-      currentHp: instanceCurrentHpFor(entity, null),
+      ...encounter,
+      tokens,
+      initiativeOrder: order,
     };
   }
 
@@ -2576,46 +2681,6 @@ export class HostStore {
     return veils;
   }
 
-  private tokensFromRoster(
-    encounter: EncounterState,
-    participants: ReadonlyArray<EncounterParticipant>,
-    reuseLayout: boolean,
-  ): BattlegroundToken[] {
-    const pool = new Map<EntityId, BattlegroundToken[]>();
-    if (reuseLayout) {
-      for (const token of encounter.tokens) {
-        if (token.entityId === null) {
-          continue;
-        }
-        const list = pool.get(token.entityId) ?? [];
-        list.push(token);
-        pool.set(token.entityId, list);
-      }
-    }
-    return participants.map((participant, index) => {
-      const reused = pool.get(participant.entityId)?.shift();
-      return this.tokenForParticipant(participant, index, reused ?? null);
-    });
-  }
-
-  private tokenForParticipant(
-    participant: EncounterParticipant,
-    index: number,
-    reused: BattlegroundToken | null = null,
-  ): BattlegroundToken {
-    return {
-      id: newTokenId(),
-      entityId: participant.entityId,
-      participantId: participant.id,
-      x: reused?.x ?? 0.18 + (index % 5) * 0.14,
-      y: reused?.y ?? 0.22 + Math.floor(index / 5) * 0.16,
-      visible: true,
-      label: participant.label,
-      scale: reused?.scale ?? 1,
-      shape: reused?.shape ?? "portrait",
-      color: reused?.color ?? null,
-    };
-  }
 
   private async insertEntity(runCard: RunCard, lifecycle: Entity["lifecycle"]): Promise<Entity> {
     const category =
@@ -2669,13 +2734,13 @@ export class HostStore {
     this.entities = next;
   }
 
-  private async syncParticipantHpOwnership(
+  private async syncTokenHpOwnership(
     entityId: EntityId,
     previousCardCurrentHp: number | null,
   ): Promise<void> {
     const entity = this.requireEntity(entityId);
     if (this.encounter) {
-      const next = withParticipantHpOwnership(this.encounter, entity, previousCardCurrentHp);
+      const next = withTokenHpOwnership(this.encounter, entity, previousCardCurrentHp);
       if (next !== this.encounter) {
         await this.putEncounter(
           { ...next, sessionId: this.encounter.sessionId },
@@ -2689,7 +2754,7 @@ export class HostStore {
       if (board === null) {
         continue;
       }
-      const next = withParticipantHpOwnership(board, entity, previousCardCurrentHp);
+      const next = withTokenHpOwnership(board, entity, previousCardCurrentHp);
       if (next === board) {
         continue;
       }
@@ -2790,17 +2855,6 @@ export class HostStore {
     ) {
       this.currentSessionId = asSessionId(metaSession);
       this.encounter = readEncounter(await db.get("encounters", this.currentSessionId), warnings);
-      if (
-        this.encounter?.live &&
-        this.encounter.tokens.length === 0 &&
-        this.encounter.participants.length > 0
-      ) {
-        this.encounter = {
-          ...this.encounter,
-          tokens: this.tokensFromRoster(this.encounter, this.encounter.participants, false),
-        };
-        await this.putEncounter(this.encounter);
-      }
       readStored(
         await db.getAllFromIndex("logEntries", "sessionId", this.currentSessionId),
         readLogEntry,
@@ -2810,17 +2864,6 @@ export class HostStore {
       this.currentSessionId = this.sessions[0]?.id ?? null;
       if (this.currentSessionId) {
         this.encounter = readEncounter(await db.get("encounters", this.currentSessionId), warnings);
-        if (
-          this.encounter?.live &&
-          this.encounter.tokens.length === 0 &&
-          this.encounter.participants.length > 0
-        ) {
-          this.encounter = {
-            ...this.encounter,
-            tokens: this.tokensFromRoster(this.encounter, this.encounter.participants, false),
-          };
-          await this.putEncounter(this.encounter);
-        }
         readStored(
           await db.getAllFromIndex("logEntries", "sessionId", this.currentSessionId),
           readLogEntry,

@@ -1,21 +1,19 @@
 import {
-  newParticipantId,
   newTokenId,
   newVeilId,
   type EntityId,
   type MediaId,
-  type ParticipantId,
   type SessionId,
 } from "./ids";
-import { cloneTracks, combatStatsFrom } from "./runCard";
+import { cloneTracks, combatStatsFrom, tracksFrom } from "./runCard";
 import {
   emptyBattleground,
   ENCOUNTER_TAG,
   NPC_CATEGORY,
   PLAYER_CATEGORY,
+  type BattlegroundToken,
   type EncounterBoard,
   type EncounterBlock,
-  type EncounterParticipant,
   type EncounterState,
   type Entity,
   type RunCard,
@@ -24,7 +22,6 @@ import {
 export function emptyEncounterBoard(): EncounterBoard {
   const board = emptyBattleground();
   return {
-    participants: [],
     activeIndex: 0,
     mapMediaId: null,
     live: false,
@@ -32,6 +29,8 @@ export function emptyEncounterBoard(): EncounterBoard {
     veils: [],
     gridSize: board.gridSize,
     tokenSize: board.tokenSize,
+    initiativeEnabled: false,
+    initiativeOrder: [],
   };
 }
 
@@ -41,7 +40,6 @@ export function emptyEncounter(sessionId: SessionId): EncounterState {
 
 export function boardOf(state: EncounterBoard): EncounterBoard {
   return {
-    participants: state.participants,
     activeIndex: state.activeIndex,
     mapMediaId: state.mapMediaId,
     live: state.live,
@@ -49,6 +47,8 @@ export function boardOf(state: EncounterBoard): EncounterBoard {
     veils: state.veils,
     gridSize: state.gridSize,
     tokenSize: state.tokenSize,
+    initiativeEnabled: state.initiativeEnabled,
+    initiativeOrder: state.initiativeOrder,
   };
 }
 
@@ -64,17 +64,34 @@ export function isNpcCard(entity: Entity): boolean {
   return entity.runCard.category === NPC_CATEGORY;
 }
 
+export function isFighterEntity(entity: Entity): boolean {
+  return isPlayerCard(entity) || isNpcCard(entity);
+}
+
+export function isFighterToken(token: BattlegroundToken, entities: ReadonlyArray<Entity>): boolean {
+  if (token.entityId === null) {
+    return false;
+  }
+  const entity = entities.find((item) => item.id === token.entityId);
+  return entity !== undefined && isFighterEntity(entity);
+}
+
+/** Portrait tokens linked to a card in this encounter. */
+export function cardTokens(board: EncounterBoard): BattlegroundToken[] {
+  return board.tokens.filter((token) => token.entityId !== null);
+}
+
 export type ResolvedCombatHp = {
   maxHp: number;
   currentHp: number;
-  currentOwnedBy: "card" | "participant";
+  currentOwnedBy: "card" | "token";
 };
 
-export function combatHpForParticipant(
-  participant: EncounterParticipant,
+export function combatHpForToken(
+  token: BattlegroundToken,
   entity: Entity | undefined,
 ): ResolvedCombatHp | null {
-  if (entity === undefined) {
+  if (entity === undefined || token.entityId === null) {
     return null;
   }
   if (!isPlayerCard(entity) && !isNpcCard(entity)) {
@@ -90,13 +107,13 @@ export function combatHpForParticipant(
     }
     return { maxHp: stats.maxHp, currentHp: stats.currentHp, currentOwnedBy: "card" };
   }
-  if (participant.currentHp === null) {
-    throw new Error(`NPC “${participant.label}” in this encounter is missing current HP`);
+  if (token.currentHp === null) {
+    throw new Error(`NPC “${token.label}” in this encounter is missing current HP`);
   }
-  return { maxHp: stats.maxHp, currentHp: participant.currentHp, currentOwnedBy: "participant" };
+  return { maxHp: stats.maxHp, currentHp: token.currentHp, currentOwnedBy: "token" };
 }
 
-/** NPC instances own current HP on the participant; players keep it on the card. */
+/** NPC instances own current HP on the token; players keep it on the card. */
 export function instanceCurrentHpFor(
   entity: Entity,
   existingInstanceHp: number | null,
@@ -118,51 +135,54 @@ export function instanceCurrentHpFor(
   return stats.maxHp;
 }
 
-export function withParticipantHpOwnership(
+export function withTokenHpOwnership(
   board: EncounterBoard,
   entity: Entity,
   previousCardCurrentHp: number | null = null,
 ): EncounterBoard {
   let changed = false;
-  const participants = board.participants.map((participant) => {
-    if (participant.entityId !== entity.id) {
-      return participant;
+  const tokens = board.tokens.map((token) => {
+    if (token.entityId !== entity.id) {
+      return token;
     }
-    const currentHp = instanceCurrentHpFor(entity, participant.currentHp, previousCardCurrentHp);
-    if (participant.currentHp === currentHp) {
-      return participant;
+    const currentHp = instanceCurrentHpFor(entity, token.currentHp, previousCardCurrentHp);
+    if (token.currentHp === currentHp) {
+      return token;
     }
     changed = true;
-    return { ...participant, currentHp };
+    return { ...token, currentHp };
   });
   if (!changed) {
     return board;
   }
-  return { ...board, participants };
+  return { ...board, tokens };
 }
 
-export function fillParticipantCurrentHp(
+export function fillTokenCurrentHp(
   board: EncounterBoard,
   entities: ReadonlyArray<Entity>,
 ): EncounterBoard {
   const byId = new Map(entities.map((entity) => [entity.id, entity]));
   let changed = false;
-  const participants = board.participants.map((participant) => {
-    const owner = byId.get(participant.entityId);
-    if (owner === undefined) {
-      return participant;
+  const tokens = board.tokens.map((token) => {
+    if (token.entityId === null) {
+      return token;
     }
-    const currentHp = instanceCurrentHpFor(owner, participant.currentHp);
-    if (participant.currentHp === currentHp) {
-      return participant;
+    const owner = byId.get(token.entityId);
+    if (owner === undefined) {
+      return token;
+    }
+    const currentHp = instanceCurrentHpFor(owner, token.currentHp);
+    if (token.currentHp === currentHp) {
+      return token;
     }
     changed = true;
-    return { ...participant, currentHp };
+    return { ...token, currentHp };
   });
   if (!changed) {
     return board;
   }
-  return { ...board, participants };
+  return { ...board, tokens };
 }
 
 export function withFilledEncounterCardHp(
@@ -173,7 +193,7 @@ export function withFilledEncounterCardHp(
     if (board === null) {
       return entity;
     }
-    const next = fillParticipantCurrentHp(board, entities);
+    const next = fillTokenCurrentHp(board, entities);
     if (next === board) {
       return entity;
     }
@@ -230,22 +250,13 @@ export function battlemapTitleForMedia(
 }
 
 export function cloneEncounterBoard(board: EncounterBoard): EncounterBoard {
-  const participantIds = new Map<ParticipantId, ParticipantId>();
-  const participants = board.participants.map((participant) => {
-    const id = newParticipantId();
-    participantIds.set(participant.id, id);
-    return {
-      ...participant,
-      id,
-      tracks: cloneTracks(participant.tracks),
-      conditions: [...participant.conditions],
-    };
-  });
   const tokens = board.tokens.map((token) => ({
     ...token,
     id: newTokenId(),
-    participantId:
-      token.participantId === null ? null : (participantIds.get(token.participantId) ?? null),
+    tracks: cloneTracks(token.tracks),
+    conditions: [...token.conditions],
+    initiativeRoll: null,
+    initiativeBonus: null,
   }));
   const veils = board.veils.map((veil) => ({
     ...veil,
@@ -253,22 +264,34 @@ export function cloneEncounterBoard(board: EncounterBoard): EncounterBoard {
   }));
   return {
     ...boardOf(board),
-    participants,
     tokens,
     veils,
+    initiativeEnabled: false,
+    initiativeOrder: [],
+    activeIndex: 0,
   };
 }
 
 export function scrubEntityFromBoard(board: EncounterBoard, entityId: EntityId): EncounterBoard {
-  const participants = board.participants.filter((participant) => participant.entityId !== entityId);
+  const removedTokenIds = new Set(
+    board.tokens.filter((token) => token.entityId === entityId).map((token) => token.id),
+  );
   const tokens = board.tokens.filter((token) => token.entityId !== entityId);
-  if (participants.length === board.participants.length && tokens.length === board.tokens.length) {
+  const initiativeOrder = board.initiativeOrder.filter((id) => !removedTokenIds.has(id));
+  if (
+    tokens.length === board.tokens.length &&
+    initiativeOrder.length === board.initiativeOrder.length
+  ) {
     return board;
   }
+  const activeId = board.initiativeOrder[board.activeIndex];
+  const activeIndex =
+    activeId === undefined ? 0 : Math.max(0, initiativeOrder.indexOf(activeId));
+  const cardCount = cardTokens({ ...board, tokens }).length;
   return {
     ...board,
-    participants,
-    activeIndex: participants.length === 0 ? 0 : Math.min(board.activeIndex, participants.length - 1),
+    activeIndex: cardCount === 0 ? 0 : Math.min(activeIndex, Math.max(initiativeOrder.length - 1, 0)),
+    initiativeOrder,
     tokens,
   };
 }
@@ -284,4 +307,41 @@ export function cardReferencedMediaIds(card: RunCard): MediaId[] {
     }
   }
   return ids;
+}
+
+export function emptyTokenInstanceFields(): Pick<
+  BattlegroundToken,
+  "currentHp" | "initiativeRoll" | "initiativeBonus" | "tracks" | "conditions"
+> {
+  return {
+    currentHp: null,
+    initiativeRoll: null,
+    initiativeBonus: null,
+    tracks: [],
+    conditions: [],
+  };
+}
+
+export function tokenFromEntity(
+  entity: Entity,
+  index: number,
+  visible: boolean,
+  at: { x: number; y: number } | null,
+): BattlegroundToken {
+  return {
+    id: newTokenId(),
+    entityId: entity.id,
+    x: at === null ? 0.18 + (index % 5) * 0.14 : at.x,
+    y: at === null ? 0.22 + Math.floor(index / 5) * 0.16 : at.y,
+    visible,
+    label: entity.runCard.title,
+    scale: 1,
+    shape: "portrait",
+    color: null,
+    currentHp: instanceCurrentHpFor(entity, null),
+    initiativeRoll: null,
+    initiativeBonus: null,
+    tracks: cloneTracks(tracksFrom(entity.runCard)),
+    conditions: [],
+  };
 }

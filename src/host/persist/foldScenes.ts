@@ -39,7 +39,6 @@ export function foldScenesIntoEncounters(
     }
     next.set(sessionId, {
       sessionId,
-      participants: [],
       activeIndex: 0,
       mapMediaId: null,
       live: false,
@@ -47,6 +46,8 @@ export function foldScenesIntoEncounters(
       veils: [],
       gridSize: board.gridSize,
       tokenSize: board.tokenSize,
+      initiativeEnabled: false,
+      initiativeOrder: [],
     });
   }
 
@@ -62,6 +63,8 @@ export function withBoardDefaults(encounter: EncounterState): EncounterState {
       typeof encounter.tokenSize === "number" && Number.isInteger(encounter.tokenSize)
         ? encounter.tokenSize
         : fallback.tokenSize,
+    initiativeEnabled: encounter.initiativeEnabled === true,
+    initiativeOrder: encounter.initiativeOrder ?? [],
   };
 }
 

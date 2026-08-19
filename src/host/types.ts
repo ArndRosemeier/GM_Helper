@@ -4,7 +4,6 @@ import type {
   EntityId,
   LogEntryId,
   MediaId,
-  ParticipantId,
   SceneId,
   SessionId,
   SourceId,
@@ -193,7 +192,6 @@ export type BattlegroundToken = {
   id: TokenId;
   /** Null for geometric stamp tokens with no card. */
   entityId: EntityId | null;
-  participantId: ParticipantId | null;
   x: number;
   y: number;
   visible: boolean;
@@ -203,6 +201,14 @@ export type BattlegroundToken = {
   shape: TokenShape;
   /** Fill color for circle/square stamps; null for portrait tokens. */
   color: string | null;
+  /** NPC instance HP. Null for players (card owns HP) and stamps. */
+  currentHp: number | null;
+  /** d20 result for this encounter's initiative, when rolled. */
+  initiativeRoll: number | null;
+  /** Initiative bonus snapshot from the card when initiative was rolled. */
+  initiativeBonus: number | null;
+  tracks: ReadonlyArray<Track>;
+  conditions: ReadonlyArray<string>;
 };
 
 export const TOKEN_SCALE_MIN = 0.5;
@@ -328,18 +334,7 @@ export type LogEntry = {
   createdAt: IsoDateTime;
 };
 
-export type EncounterParticipant = {
-  id: ParticipantId;
-  entityId: EntityId;
-  label: string;
-  tracks: ReadonlyArray<Track>;
-  conditions: ReadonlyArray<string>;
-  /** NPC instance HP. Null for players — the player card owns current HP. */
-  currentHp: number | null;
-};
-
 export type EncounterBoard = {
-  participants: ReadonlyArray<EncounterParticipant>;
   activeIndex: number;
   mapMediaId: MediaId | null;
   live: boolean;
@@ -348,6 +343,9 @@ export type EncounterBoard = {
   /** Cell size in CSS pixels. `null` hides the grid. */
   gridSize: number | null;
   tokenSize: number;
+  initiativeEnabled: boolean;
+  /** Turn order by token id. Indexes `activeIndex` when initiative is on. */
+  initiativeOrder: ReadonlyArray<TokenId>;
 };
 
 export type EncounterBlock = { kind: "encounter" } & EncounterBoard;

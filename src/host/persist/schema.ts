@@ -23,7 +23,7 @@
  *
  * Unversioned IndexedDB (no schemaVersion meta key) is version 0.
  */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 18;
 
 export const SCHEMA_META_KEY = "schemaVersion";
 

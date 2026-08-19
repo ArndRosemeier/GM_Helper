@@ -13,6 +13,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@3d-dice/dice-box": "^1.1.4",
     "fflate": "^0.8.3",
     "idb": "^8.0.3",
     "minisearch": "^7.2.0",

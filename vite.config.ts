@@ -104,6 +104,12 @@ export default defineConfig(({ mode }) => {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  optimizeDeps: {
+    exclude: ["@3d-dice/dice-box"],
+  },
+  worker: {
+    format: "es",
+  },
   plugins: [
     react(),
     pdfjsStaticAssets(),

@@ -1,5 +1,7 @@
 import {
+  useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -19,11 +21,11 @@ import {
   tokenSizeFittingGrid,
   type BattlegroundToken,
   type BattlegroundVeil,
-  type EncounterParticipant,
   type Entity,
   type VeilKind,
 } from "../host/types";
-import { combatHpForParticipant } from "../host/encounter";
+import { combatHpForToken } from "../host/encounter";
+import { activeInitiativeTokenId } from "../host/initiative";
 import { snapBoxToGrid, snapPointToGrid, tokenSpanCells } from "../host/gridSnap";
 import { useHost } from "../host/HostContext";
 import type { EntityId, TokenId, VeilId } from "../host/ids";
@@ -42,6 +44,8 @@ import {
   veilCellPx,
   type VeilEdge,
 } from "../host/veil";
+import { useEncounterDice } from "./DiceRoller";
+import { InitiativeSidebar, InitiativeTurnMarker } from "./InitiativeSidebar";
 
 const DRAG_THRESHOLD_PX = 8;
 const DOUBLE_TAP_MS = 500;
@@ -87,7 +91,16 @@ export function TableSurface() {
   const selected = tokens.find((token) => token.id === selectedTokenId) ?? null;
   const selectedVeil = veils.find((veil) => veil.id === selectedVeilId) ?? null;
   const selectedHp =
-    selected === null ? null : tokenCombatHp(selected, snap.tableEncounter?.participants ?? [], snap.entities);
+    selected === null
+      ? null
+      : (() => {
+          const owner =
+            selected.entityId === null
+              ? undefined
+              : snap.entities.find((item) => item.id === selected.entityId);
+          const hp = combatHpForToken(selected, owner);
+          return hp === null ? null : { currentHp: hp.currentHp, maxHp: hp.maxHp };
+        })();
   const inspectEntityId = inspecting && selected !== null ? selected.entityId : null;
   const inspectEntity =
     inspectEntityId === null
@@ -121,13 +134,56 @@ export function TableSurface() {
   const boardHeightPx = boardLayout !== null ? boardLayout.height : (viewportPx === null ? 0 : viewportPx.height);
   const boardReady = boardWidthPx > 0 && boardHeightPx > 0;
   const cellPx = veilCellPx(gridSize, snap.tableEncounter?.tokenSize ?? TOKEN_SIZE_DEFAULT);
-  const coveredCardIds = new Set(
-    boardReady
-      ? tokens
-          .filter((token) => portraitCoveredByVeils(token, veils, unitSize, cellPx, boardWidthPx, boardHeightPx))
-          .map((token) => token.id)
-      : [],
+  const coveredCardIds = useMemo(
+    () =>
+      new Set(
+        boardReady
+          ? tokens
+              .filter((token) =>
+                portraitCoveredByVeils(token, veils, unitSize, cellPx, boardWidthPx, boardHeightPx),
+              )
+              .map((token) => token.id)
+          : [],
+      ),
+    [boardReady, tokens, veils, unitSize, cellPx, boardWidthPx, boardHeightPx],
   );
+  const coveredTokenKey = useMemo(() => [...coveredCardIds].sort().join(","), [coveredCardIds]);
+  const initiativeSyncKey = useMemo(() => {
+    const board = snap.tableEncounter;
+    if (board === null) {
+      return coveredTokenKey;
+    }
+    const visibility = board.tokens
+      .map((token) => `${token.id}:${token.visible ? "1" : "0"}`)
+      .join(",");
+    return `${visibility}|${coveredTokenKey}`;
+  }, [snap.tableEncounter, coveredTokenKey]);
+  const dice = useEncounterDice();
+  const activeInitiativeId =
+    snap.tableEncounter !== null && snap.tableEncounter.initiativeEnabled
+      ? activeInitiativeTokenId(snap.tableEncounter)
+      : null;
+  const activeInitiativeToken =
+    activeInitiativeId === null || snap.tableEncounter === null
+      ? null
+      : (() => {
+          const token = snap.tableEncounter.tokens.find((item) => item.id === activeInitiativeId);
+          return token !== undefined && token.visible && !coveredCardIds.has(token.id) ? token : null;
+        })();
+
+  useEffect(() => {
+    const board = snap.tableEncounter;
+    if (board === null || !board.initiativeEnabled || !boardReady) {
+      return;
+    }
+    store.run(store.syncInitiativeRolls([...coveredCardIds]));
+  }, [
+    store,
+    snap.tableEncounter,
+    snap.entities,
+    boardReady,
+    initiativeSyncKey,
+  ]);
 
   useLayoutEffect(() => {
     const node = viewport.current;
@@ -572,11 +628,20 @@ export function TableSurface() {
               }}
             />
           ) : null}
+          {activeInitiativeToken !== null ? (
+            <InitiativeTurnMarker
+              tokenX={activeInitiativeToken.x}
+              tokenY={activeInitiativeToken.y}
+              unitSize={unitSize}
+              tokenScale={activeInitiativeToken.scale}
+            />
+          ) : null}
           {tokens.length === 0 && !mapUrl ? (
             <p className="board-empty">No public map yet. Pick the pad up, or tap Lift.</p>
           ) : null}
         </div>
       </div>
+      {dice.stage}
       {snap.session ? (
         <BoardScaleControls
           compact
@@ -618,6 +683,8 @@ export function TableSurface() {
           }}
         />
       ) : null}
+      {dice.hud}
+      <InitiativeSidebar coveredTokenIds={coveredCardIds} />
       <div className="table-corner-actions">
         <button
           type="button"
@@ -699,13 +766,14 @@ export function TableSurface() {
                   revealSecrets
                   expanded
                   onToggleExpand={() => undefined}
-                  inspectParticipantId={selected.participantId ?? undefined}
+                  inspectTokenId={selected.id}
                 />
               </div>
             </div>,
             document.body,
           )
         : null}
+      {dice.overlays}
     </div>
   );
 }
@@ -723,22 +791,6 @@ function tokenArtFor(
     return defaultTokenDataUrl(token.label, token.entityId);
   }
   return tokenArtUrl(owner, mediaUrls);
-}
-
-function tokenCombatHp(
-  token: BattlegroundToken,
-  participants: ReadonlyArray<EncounterParticipant>,
-  entities: ReadonlyArray<Entity>,
-): { currentHp: number; maxHp: number } | null {
-  if (token.participantId === null) {
-    return null;
-  }
-  const participant = participants.find((item) => item.id === token.participantId);
-  if (!participant) {
-    return null;
-  }
-  const owner = entities.find((item) => item.id === participant.entityId);
-  return combatHpForParticipant(participant, owner);
 }
 
 function hpFillRatio(currentHp: number, maxHp: number): number {

@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, parseAppSettings } from "../settings";
 import { asCampaignId, asEntityId, asMediaId, asSessionId, type CampaignId, type EntityId } from "../ids";
 import type { Campaign, EncounterState, MediaRecord, Session, Source } from "../types";
 import { withEncounterCategory } from "../types";
-import { fillParticipantCurrentHp, withFilledEncounterCardHp } from "../encounter";
+import { fillTokenCurrentHp, withFilledEncounterCardHp } from "../encounter";
 import {
   ARCHIVE_FORMAT,
   CARD_ARCHIVE_FORMAT,
@@ -191,7 +191,7 @@ export function migrateArchivePayload(
     scenes,
     readEncounterList(record.encounters, warnings),
   ).map((item) => ({
-    ...fillParticipantCurrentHp(item, entities),
+    ...fillTokenCurrentHp(item, entities),
     sessionId: item.sessionId,
   }));
 
