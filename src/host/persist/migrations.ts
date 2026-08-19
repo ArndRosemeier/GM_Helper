@@ -147,6 +147,12 @@ export const SCHEMA_MIGRATIONS: ReadonlyArray<SchemaMigration> = [
     reason: "Fighter instance state lives on tokens; participants roster removed.",
     apply: migrate17to18,
   },
+  {
+    from: 18,
+    to: 19,
+    reason: "Encounter boards store a saved stage snapshot for reset.",
+    apply: migrate18to19,
+  },
 ];
 
 export function assertMigrationChain(
@@ -485,6 +491,23 @@ async function migrate16to17(db: GmDb): Promise<ReadonlyArray<MigrationWarning>>
 }
 
 async function migrate17to18(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
+  const warnings: MigrationWarning[] = [];
+  for (const raw of await db.getAll("encounters")) {
+    const next = readEncounter(raw, warnings);
+    if (next) {
+      await db.put("encounters", next);
+    }
+  }
+  for (const raw of await db.getAll("entities")) {
+    const next = readEntity(raw, warnings);
+    if (next) {
+      await db.put("entities", next);
+    }
+  }
+  return warnings;
+}
+
+async function migrate18to19(db: GmDb): Promise<ReadonlyArray<MigrationWarning>> {
   const warnings: MigrationWarning[] = [];
   for (const raw of await db.getAll("encounters")) {
     const next = readEncounter(raw, warnings);

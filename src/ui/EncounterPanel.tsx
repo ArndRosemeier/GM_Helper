@@ -1,24 +1,32 @@
 import { battlemapTitleForMedia, cardTokens, isPlayerCard } from "../host/encounter";
 import { useHost } from "../host/HostContext";
+import type { BattlegroundToken, Entity } from "../host/types";
 import { cardImageUrl } from "../lib/defaultToken";
 
-/** Roster chips: name and remove only. Current HP is edited on the battlefield. */
+function isRosterToken(token: BattlegroundToken, entities: ReadonlyArray<Entity>): boolean {
+  if (token.entityId === null) {
+    return false;
+  }
+  const owner = entities.find((item) => item.id === token.entityId);
+  return owner !== undefined && !isPlayerCard(owner);
+}
+
+/** Roster chips: NPCs and maps only. Players join every encounter automatically. */
 
 export function EncounterAmbient() {
   const { store, snap } = useHost();
   const cards = snap.encounter ? cardTokens(snap.encounter) : [];
+  const rosterCards = cards.filter((token) => isRosterToken(token, snap.entities));
   const mapId = snap.encounter?.mapMediaId ?? null;
   const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
   const mapTitle = battlemapTitleForMedia(snap.entities, mapId) ?? "Map";
-  const empty = mapId === null && cards.length === 0;
+  const empty = mapId === null && rosterCards.length === 0;
   const canClear =
     mapId !== null ||
     (snap.encounter?.tokens.length ?? 0) > 0 ||
     snap.encounter?.live === true ||
-    cards.some((token) => {
-      const owner = snap.entities.find((item) => item.id === token.entityId);
-      return owner === undefined || !isPlayerCard(owner);
-    });
+    rosterCards.length > 0;
+  const canShowEncounter = mapId !== null || rosterCards.length > 0;
   return (
     <div className="encounter-define">
       <div
@@ -28,7 +36,7 @@ export function EncounterAmbient() {
       >
         {empty ? (
           <p className="muted encounter-hint">
-            Add or drag cards here. Battlemap or image cards set the map.
+            Drag NPCs or battlemaps here. Players join automatically.
           </p>
         ) : (
           <ol className="encounter-chips">
@@ -46,7 +54,7 @@ export function EncounterAmbient() {
                 </button>
               </li>
             ) : null}
-            {cards.map((token) => {
+            {rosterCards.map((token) => {
               const owner = snap.entities.find((item) => item.id === token.entityId);
               const art = owner ? cardImageUrl(owner, snap.mediaUrls) : null;
               return (
@@ -70,7 +78,7 @@ export function EncounterAmbient() {
       <div className="encounter-define-actions">
         <button
           type="button"
-          disabled={cards.length === 0 && mapId === null}
+          disabled={!canShowEncounter}
           onClick={() => store.run(store.addEncounterAsCard())}
         >
           Add as card
@@ -85,7 +93,7 @@ export function EncounterAmbient() {
         <button
           type="button"
           className="next-turn"
-          disabled={cards.length === 0}
+          disabled={!canShowEncounter}
           onClick={() => store.run(store.beginEncounter())}
         >
           Show Encounter

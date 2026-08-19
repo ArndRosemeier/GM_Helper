@@ -65,6 +65,7 @@ export function TableSurface() {
   const [pickingCard, setPickingCard] = useState(false);
   const placeCardAt = useRef<{ x: number; y: number } | null>(null);
   const plusButton = useRef<HTMLButtonElement>(null);
+  const stampsArea = useRef<HTMLDivElement>(null);
   const boardPointerCount = useRef(0);
   const emptyTapStart = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const lastEmptyTap = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -78,6 +79,52 @@ export function TableSurface() {
     height: number;
   } | null>(null);
   const [viewportPx, setViewportPx] = useState<{ width: number; height: number } | null>(null);
+  const [stageSetFlash, setStageSetFlash] = useState(false);
+  const [setStageConfirmOpen, setSetStageConfirmOpen] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [combatGlows, setCombatGlows] = useState<
+    ReadonlyArray<{ id: string; tokenId: TokenId; kind: "damage" | "heal" }>
+  >([]);
+  const stageFlashTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (stageFlashTimer.current !== null) {
+        window.clearTimeout(stageFlashTimer.current);
+      }
+    };
+  }, []);
+
+  const triggerCombatGlow = (tokenId: TokenId, kind: "damage" | "heal"): void => {
+    const id = crypto.randomUUID();
+    setCombatGlows((current) => [...current, { id, tokenId, kind }]);
+    window.setTimeout(() => {
+      setCombatGlows((current) => current.filter((item) => item.id !== id));
+    }, 1000);
+  };
+
+  const onSetStage = (): void => {
+    void store
+      .setEncounterStage()
+      .then(() => {
+        setStageSetFlash(true);
+        if (stageFlashTimer.current !== null) {
+          window.clearTimeout(stageFlashTimer.current);
+        }
+        stageFlashTimer.current = window.setTimeout(() => {
+          setStageSetFlash(false);
+          stageFlashTimer.current = null;
+        }, 1400);
+      })
+      .catch((error: unknown) => {
+        store.report(error);
+      });
+  };
+
+  const onConfirmReset = (): void => {
+    setResetConfirmOpen(false);
+    store.run(store.resetEncounterBoard());
+  };
 
   const mapId = snap.tableEncounter?.mapMediaId ?? null;
   const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
@@ -543,6 +590,7 @@ export function TableSurface() {
               token={token}
               unitSize={unitSize}
               selected={token.id === selectedTokenId}
+              downed={false}
               artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
               onPointerDown={onTokenPointerDown}
               onPointerMove={onTokenPointerMove}
@@ -569,18 +617,26 @@ export function TableSurface() {
             : null}
           {tokens
             .filter((token) => !isStampToken(token) && !coveredCardIds.has(token.id))
-            .map((token) => (
-              <BoardToken
-                key={token.id}
-                token={token}
-                unitSize={unitSize}
-                selected={token.id === selectedTokenId}
-                artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
-                onPointerDown={onTokenPointerDown}
-                onPointerMove={onTokenPointerMove}
-                onPointerUp={onTokenPointerUp}
-              />
-            ))}
+            .map((token) => {
+              const owner =
+                token.entityId === null
+                  ? undefined
+                  : snap.entities.find((item) => item.id === token.entityId);
+              const hp = combatHpForToken(token, owner);
+              return (
+                <BoardToken
+                  key={token.id}
+                  token={token}
+                  unitSize={unitSize}
+                  selected={token.id === selectedTokenId}
+                  downed={hp !== null && hp.currentHp <= 0}
+                  artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
+                  onPointerDown={onTokenPointerDown}
+                  onPointerMove={onTokenPointerMove}
+                  onPointerUp={onTokenPointerUp}
+                />
+              );
+            })}
           {selected !== null && !coveredCardIds.has(selected.id) ? (
             <TokenFloatControls
               token={selected}
@@ -589,6 +645,34 @@ export function TableSurface() {
               canInspect={
                 selected.entityId !== null &&
                 snap.entities.some((item) => item.id === selected.entityId)
+              }
+              onDamage={
+                selectedHp === null
+                  ? undefined
+                  : () => {
+                      dice.openCombatRoll({
+                        kind: "damage",
+                        subject: selected.label,
+                        onResult: (total) => {
+                          triggerCombatGlow(selected.id, "damage");
+                          store.run(store.adjustTokenCurrentHp(selected.id, -total));
+                        },
+                      });
+                    }
+              }
+              onHeal={
+                selectedHp === null
+                  ? undefined
+                  : () => {
+                      dice.openCombatRoll({
+                        kind: "heal",
+                        subject: selected.label,
+                        onResult: (total) => {
+                          triggerCombatGlow(selected.id, "heal");
+                          store.run(store.adjustTokenCurrentHp(selected.id, total));
+                        },
+                      });
+                    }
               }
               onGrow={() => store.run(store.adjustTokenScale(selected.id, 1))}
               onShrink={() => store.run(store.adjustTokenScale(selected.id, -1))}
@@ -636,6 +720,22 @@ export function TableSurface() {
               tokenScale={activeInitiativeToken.scale}
             />
           ) : null}
+          {combatGlows.map((glow) => {
+            const token = snap.tableEncounter?.tokens.find((item) => item.id === glow.tokenId);
+            if (token === undefined) {
+              return null;
+            }
+            return (
+              <CombatTokenGlow
+                key={glow.id}
+                tokenX={token.x}
+                tokenY={token.y}
+                unitSize={unitSize}
+                tokenScale={token.scale}
+                kind={glow.kind}
+              />
+            );
+          })}
           {tokens.length === 0 && !mapUrl ? (
             <p className="board-empty">No public map yet. Pick the pad up, or tap Lift.</p>
           ) : null}
@@ -646,8 +746,9 @@ export function TableSurface() {
         <BoardScaleControls
           compact
           plusButtonRef={plusButton}
+          stampsAreaRef={stampsArea}
           onPickCard={() => openCardPicker(null)}
-          onAddShape={(shape, color, control) => {
+          onAddShape={(shape, color) => {
             const viewportNode = viewport.current;
             const boardNode = board.current;
             if (!viewportNode || !boardNode) {
@@ -655,7 +756,7 @@ export function TableSurface() {
               return;
             }
             const at = pointBesideControl(
-              control,
+              stampsArea.current,
               viewportNode,
               boardNode,
               camera.view,
@@ -664,7 +765,7 @@ export function TableSurface() {
             );
             store.run(store.addShapeToken(shape, color, at.x, at.y));
           }}
-          onAddCover={(kind, control) => {
+          onAddCover={(kind) => {
             const viewportNode = viewport.current;
             const boardNode = board.current;
             if (!viewportNode || !boardNode) {
@@ -672,7 +773,7 @@ export function TableSurface() {
               return;
             }
             const at = pointBesideControl(
-              control,
+              stampsArea.current,
               viewportNode,
               boardNode,
               camera.view,
@@ -704,10 +805,20 @@ export function TableSurface() {
         </button>
         <button
           type="button"
+          className="board-set-stage"
+          aria-label="Set stage"
+          title="Set stage"
+          onClick={() => setSetStageConfirmOpen(true)}
+        >
+          ⚑
+        </button>
+        <button
+          type="button"
           className="board-reset"
           aria-label="Reset encounter board"
           title="Reset board"
-          onClick={() => store.run(store.resetEncounterBoard())}
+          disabled={snap.tableEncounter?.stage === null}
+          onClick={() => setResetConfirmOpen(true)}
         >
           ↻
         </button>
@@ -725,7 +836,7 @@ export function TableSurface() {
                 const at =
                   placeCardAt.current ??
                   pointBesideControl(
-                    plusButton.current,
+                    stampsArea.current,
                     viewportNode,
                     boardNode,
                     camera.view,
@@ -773,7 +884,126 @@ export function TableSurface() {
             document.body,
           )
         : null}
+      {stageSetFlash
+        ? createPortal(
+            <div className="stage-set-toast" aria-live="polite" aria-atomic="true">
+              <p>Stage set</p>
+            </div>,
+            document.body,
+          )
+        : null}
+      {setStageConfirmOpen
+        ? createPortal(
+            <BoardConfirmModal
+              titleId="set-stage-title"
+              title="Set stage?"
+              body={
+                snap.tableEncounter?.stage === null
+                  ? "Save the current board layout as the stage. Reset will restore this layout later."
+                  : "Replace the saved stage with the current board layout. Reset will restore this layout later."
+              }
+              confirmLabel="Set stage"
+              confirmClassName="board-set-stage-confirm"
+              onCancel={() => setSetStageConfirmOpen(false)}
+              onConfirm={() => {
+                setSetStageConfirmOpen(false);
+                onSetStage();
+              }}
+            />,
+            document.body,
+          )
+        : null}
+      {resetConfirmOpen
+        ? createPortal(
+            <BoardConfirmModal
+              titleId="reset-board-title"
+              title="Reset board?"
+              body="Restore the saved stage, turn initiative off, and reset NPC hit points."
+              confirmLabel="Reset"
+              confirmClassName="board-reset-confirm"
+              onCancel={() => setResetConfirmOpen(false)}
+              onConfirm={onConfirmReset}
+            />,
+            document.body,
+          )
+        : null}
       {dice.overlays}
+    </div>
+  );
+}
+
+function CombatTokenGlow({
+  tokenX,
+  tokenY,
+  unitSize,
+  tokenScale,
+  kind,
+}: {
+  tokenX: number;
+  tokenY: number;
+  unitSize: number;
+  tokenScale: number;
+  kind: "damage" | "heal";
+}) {
+  const sizePx = unitSize * tokenScale;
+  const style: CSSProperties & { "--token-art-size": string } = {
+    left: `${String(tokenX * 100)}%`,
+    top: `${String(tokenY * 100)}%`,
+    "--token-art-size": `${String(sizePx)}px`,
+  };
+  return (
+    <div
+      className={kind === "damage" ? "combat-token-glow is-damage" : "combat-token-glow is-heal"}
+      style={style}
+      aria-hidden="true"
+    >
+      <span className="combat-token-glow-ring" />
+    </div>
+  );
+}
+
+function BoardConfirmModal({
+  titleId,
+  title,
+  body,
+  confirmLabel,
+  confirmClassName,
+  onCancel,
+  onConfirm,
+}: {
+  titleId: string;
+  title: string;
+  body: string;
+  confirmLabel: string;
+  confirmClassName: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="busy-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      onClick={onCancel}
+    >
+      <div
+        className="busy-modal-card"
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <p className="eyebrow">Encounter</p>
+        <h2 id={titleId}>{title}</h2>
+        <p>{body}</p>
+        <div className="card-actions">
+          <button type="button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className={confirmClassName} onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -807,6 +1037,7 @@ function BoardToken({
   token,
   unitSize,
   selected,
+  downed,
   artUrl,
   onPointerDown,
   onPointerMove,
@@ -815,6 +1046,7 @@ function BoardToken({
   token: BattlegroundToken;
   unitSize: number;
   selected: boolean;
+  downed: boolean;
   artUrl: string | null;
   onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId) => void;
@@ -828,6 +1060,7 @@ function BoardToken({
     "token",
     selected ? "is-selected" : null,
     stamp ? "is-stamp" : null,
+    downed ? "is-downed" : null,
   ]
     .filter((part): part is string => part !== null)
     .join(" ");
@@ -849,7 +1082,10 @@ function BoardToken({
       {shapeClass && token.color ? (
         <span className={shapeClass} style={{ background: token.color }} />
       ) : (
-        <img className="token-art" src={artUrl ?? defaultTokenDataUrl(token.label || "?", "stamp")} alt="" />
+        <span className="token-art-wrap">
+          <img className="token-art" src={artUrl ?? defaultTokenDataUrl(token.label || "?", "stamp")} alt="" />
+          {downed ? <span className="token-down-overlay" aria-hidden="true" /> : null}
+        </span>
       )}
       {token.label.length > 0 ? <span className="token-name">{token.label}</span> : null}
     </button>
@@ -893,6 +1129,8 @@ function TokenFloatControls({
   unitSize,
   hp,
   canInspect,
+  onDamage,
+  onHeal,
   onGrow,
   onShrink,
   onInspect,
@@ -902,6 +1140,8 @@ function TokenFloatControls({
   unitSize: number;
   hp: { currentHp: number; maxHp: number } | null;
   canInspect: boolean;
+  onDamage?: () => void;
+  onHeal?: () => void;
   onGrow: () => void;
   onShrink: () => void;
   onInspect: () => void;
@@ -923,6 +1163,26 @@ function TokenFloatControls({
         <TokenHpMeter currentHp={hp.currentHp} maxHp={hp.maxHp} name={token.label} />
       ) : null}
       <div className="token-float-buttons">
+        {onDamage !== undefined ? (
+          <button
+            type="button"
+            className="token-combat-btn is-damage"
+            aria-label={`Damage ${token.label}`}
+            onClick={onDamage}
+          >
+            <BloodDropIcon />
+          </button>
+        ) : null}
+        {onHeal !== undefined ? (
+          <button
+            type="button"
+            className="token-combat-btn is-heal"
+            aria-label={`Heal ${token.label}`}
+            onClick={onHeal}
+          >
+            <HealCrossIcon />
+          </button>
+        ) : null}
         {canInspect ? (
           <button type="button" aria-label={`Open card for ${token.label}`} onClick={onInspect}>
             i
@@ -944,6 +1204,22 @@ function TokenFloatControls({
         </button>
       </div>
     </div>
+  );
+}
+
+function BloodDropIcon() {
+  return (
+    <svg className="token-combat-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2C9.2 7.6 6 10.8 6 14a6 6 0 1 0 12 0c0-3.2-3.2-6.4-6-12z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function HealCrossIcon() {
+  return (
+    <svg className="token-combat-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4z" fill="currentColor" />
+    </svg>
   );
 }
 
@@ -1152,15 +1428,17 @@ function containInBox(
 function BoardScaleControls({
   compact = false,
   plusButtonRef,
+  stampsAreaRef,
   onPickCard,
   onAddShape,
   onAddCover,
 }: {
   compact?: boolean;
   plusButtonRef?: RefObject<HTMLButtonElement | null>;
+  stampsAreaRef?: RefObject<HTMLDivElement | null>;
   onPickCard?: () => void;
-  onAddShape: (shape: "circle" | "square", color: string, control: HTMLElement) => void;
-  onAddCover: (kind: VeilKind, control: HTMLElement) => void;
+  onAddShape: (shape: "circle" | "square", color: string) => void;
+  onAddCover: (kind: VeilKind) => void;
 }) {
   const { store, snap } = useHost();
   const lastGrid = useRef(snap.tableEncounter?.gridSize ?? GRID_SIZE_DEFAULT);
@@ -1212,7 +1490,7 @@ function BoardScaleControls({
           onChange={(event) => store.run(store.setGridSize(Number(event.target.value)))}
         />
       </label>
-      <div className="board-stamps" role="toolbar" aria-label="Shape stamps">
+      <div ref={stampsAreaRef} className="board-stamps" role="toolbar" aria-label="Shape stamps">
         {TOKEN_STAMP_COLORS.map((color) => (
           <div key={color} className="board-stamp-column">
             <button
@@ -1220,14 +1498,14 @@ function BoardScaleControls({
               className="board-stamp is-circle"
               style={{ background: color }}
               aria-label={`Add circle token ${color}`}
-              onClick={(event) => onAddShape("circle", color, event.currentTarget)}
+              onClick={() => onAddShape("circle", color)}
             />
             <button
               type="button"
               className="board-stamp is-square"
               style={{ background: color }}
               aria-label={`Add square token ${color}`}
-              onClick={(event) => onAddShape("square", color, event.currentTarget)}
+              onClick={() => onAddShape("square", color)}
             />
           </div>
         ))}
@@ -1247,7 +1525,7 @@ function BoardScaleControls({
             type="button"
             className="board-stamp-veil"
             aria-label="Add veil"
-            onClick={(event) => onAddCover("veil", event.currentTarget)}
+            onClick={() => onAddCover("veil")}
           >
             <span className="board-stamp-veil-mark" />
           </button>
@@ -1255,7 +1533,7 @@ function BoardScaleControls({
             type="button"
             className="board-stamp-fog"
             aria-label="Add fog of war"
-            onClick={(event) => onAddCover("fog", event.currentTarget)}
+            onClick={() => onAddCover("fog")}
           >
             <span className="board-stamp-fog-mark" />
           </button>

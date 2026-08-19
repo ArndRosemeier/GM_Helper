@@ -1604,7 +1604,7 @@ body.is-card-dragging .encounter-roster {
 .veil.is-fog {
   z-index: 6;
   border: 2px solid #111;
-  background: #050504;
+  background: #6e6e6e;
 }
 
 .veil.is-fog.is-selected {
@@ -1619,43 +1619,136 @@ body.is-card-dragging .encounter-roster {
   pointer-events: none;
 }
 
+.veil-fog-clip::before {
+  content: "";
+  position: absolute;
+  inset: -70%;
+  pointer-events: none;
+  filter: blur(7px);
+  opacity: 0.7;
+  background:
+    radial-gradient(ellipse 12% 9% at 8% 14%, rgb(210 210 210 / 0.55) 0%, transparent 72%),
+    radial-gradient(ellipse 10% 11% at 22% 8%, rgb(168 168 168 / 0.58) 0%, transparent 70%),
+    radial-gradient(ellipse 9% 8% at 36% 18%, rgb(194 194 194 / 0.5) 0%, transparent 68%),
+    radial-gradient(ellipse 11% 10% at 52% 6%, rgb(148 148 148 / 0.62) 0%, transparent 70%),
+    radial-gradient(ellipse 8% 12% at 68% 16%, rgb(204 204 204 / 0.48) 0%, transparent 72%),
+    radial-gradient(ellipse 13% 9% at 84% 10%, rgb(156 156 156 / 0.6) 0%, transparent 68%),
+    radial-gradient(ellipse 10% 8% at 14% 34%, rgb(178 178 178 / 0.56) 0%, transparent 70%),
+    radial-gradient(ellipse 9% 11% at 30% 42%, rgb(138 138 138 / 0.64) 0%, transparent 66%),
+    radial-gradient(ellipse 12% 8% at 46% 32%, rgb(200 200 200 / 0.46) 0%, transparent 72%),
+    radial-gradient(ellipse 8% 10% at 62% 38%, rgb(162 162 162 / 0.58) 0%, transparent 70%),
+    radial-gradient(ellipse 11% 9% at 78% 30%, rgb(186 186 186 / 0.52) 0%, transparent 68%),
+    radial-gradient(ellipse 9% 8% at 92% 44%, rgb(144 144 144 / 0.62) 0%, transparent 70%),
+    radial-gradient(ellipse 10% 12% at 6% 58%, rgb(172 172 172 / 0.56) 0%, transparent 70%),
+    radial-gradient(ellipse 12% 8% at 24% 66%, rgb(208 208 208 / 0.44) 0%, transparent 72%),
+    radial-gradient(ellipse 8% 9% at 40% 56%, rgb(150 150 150 / 0.6) 0%, transparent 68%),
+    radial-gradient(ellipse 11% 10% at 58% 62%, rgb(182 182 182 / 0.52) 0%, transparent 70%),
+    radial-gradient(ellipse 9% 11% at 74% 54%, rgb(134 134 134 / 0.66) 0%, transparent 66%),
+    radial-gradient(ellipse 10% 8% at 88% 68%, rgb(196 196 196 / 0.5) 0%, transparent 72%),
+    radial-gradient(ellipse 12% 9% at 12% 82%, rgb(160 160 160 / 0.58) 0%, transparent 70%),
+    radial-gradient(ellipse 8% 10% at 28% 88%, rgb(174 174 174 / 0.54) 0%, transparent 68%),
+    radial-gradient(ellipse 11% 8% at 48% 78%, rgb(214 214 214 / 0.42) 0%, transparent 72%),
+    radial-gradient(ellipse 9% 12% at 66% 86%, rgb(142 142 142 / 0.62) 0%, transparent 68%),
+    radial-gradient(ellipse 10% 9% at 82% 80%, rgb(188 188 188 / 0.5) 0%, transparent 70%);
+  animation: veil-fog-mist 24s ease-in-out infinite;
+}
+
 .veil-fog {
   position: absolute;
-  inset: -55%;
+  inset: -65%;
   pointer-events: none;
+  filter: blur(5px);
+  opacity: 0.88;
   background:
-    radial-gradient(ellipse 42% 34% at 18% 40%, #3f3d38 0%, transparent 70%),
-    radial-gradient(ellipse 48% 40% at 72% 22%, #1c1b18 0%, transparent 65%),
-    radial-gradient(ellipse 36% 46% at 58% 78%, #2c2b27 0%, transparent 68%),
-    radial-gradient(ellipse 50% 32% at 28% 82%, #12110f 0%, transparent 62%);
-  animation: veil-fog-drift 16s ease-in-out infinite;
+    radial-gradient(ellipse 11% 8% at 6% 10%, rgb(206 206 206 / 0.62) 0%, transparent 70%),
+    radial-gradient(ellipse 8% 10% at 18% 22%, rgb(140 140 140 / 0.7) 0%, transparent 66%),
+    radial-gradient(ellipse 10% 7% at 32% 8%, rgb(186 186 186 / 0.54) 0%, transparent 72%),
+    radial-gradient(ellipse 7% 9% at 44% 18%, rgb(154 154 154 / 0.64) 0%, transparent 68%),
+    radial-gradient(ellipse 12% 8% at 58% 6%, rgb(198 198 198 / 0.5) 0%, transparent 70%),
+    radial-gradient(ellipse 8% 11% at 72% 16%, rgb(132 132 132 / 0.72) 0%, transparent 64%),
+    radial-gradient(ellipse 9% 7% at 86% 8%, rgb(176 176 176 / 0.56) 0%, transparent 70%),
+    radial-gradient(ellipse 10% 9% at 10% 36%, rgb(148 148 148 / 0.66) 0%, transparent 68%),
+    radial-gradient(ellipse 7% 8% at 24% 44%, rgb(212 212 212 / 0.48) 0%, transparent 72%),
+    radial-gradient(ellipse 11% 7% at 38% 32%, rgb(168 168 168 / 0.58) 0%, transparent 70%),
+    radial-gradient(ellipse 8% 10% at 52% 42%, rgb(136 136 136 / 0.7) 0%, transparent 66%),
+    radial-gradient(ellipse 9% 8% at 66% 34%, rgb(192 192 192 / 0.52) 0%, transparent 70%),
+    radial-gradient(ellipse 7% 11% at 80% 46%, rgb(158 158 158 / 0.62) 0%, transparent 68%),
+    radial-gradient(ellipse 10% 7% at 94% 28%, rgb(204 204 204 / 0.46) 0%, transparent 72%),
+    radial-gradient(ellipse 8% 9% at 4% 58%, rgb(144 144 144 / 0.68) 0%, transparent 66%),
+    radial-gradient(ellipse 11% 8% at 20% 62%, rgb(180 180 180 / 0.54) 0%, transparent 70%),
+    radial-gradient(ellipse 7% 10% at 34% 54%, rgb(128 128 128 / 0.74) 0%, transparent 64%),
+    radial-gradient(ellipse 9% 7% at 48% 66%, rgb(196 196 196 / 0.5) 0%, transparent 72%),
+    radial-gradient(ellipse 8% 8% at 62% 58%, rgb(152 152 152 / 0.64) 0%, transparent 68%),
+    radial-gradient(ellipse 10% 9% at 76% 68%, rgb(172 172 172 / 0.58) 0%, transparent 70%),
+    radial-gradient(ellipse 7% 7% at 90% 56%, rgb(138 138 138 / 0.7) 0%, transparent 66%),
+    radial-gradient(ellipse 9% 10% at 12% 80%, rgb(188 188 188 / 0.52) 0%, transparent 70%),
+    radial-gradient(ellipse 8% 7% at 26% 88%, rgb(146 146 146 / 0.66) 0%, transparent 68%),
+    radial-gradient(ellipse 11% 8% at 42% 76%, rgb(208 208 208 / 0.44) 0%, transparent 72%),
+    radial-gradient(ellipse 7% 9% at 56% 86%, rgb(142 142 142 / 0.68) 0%, transparent 66%),
+    radial-gradient(ellipse 10% 7% at 70% 78%, rgb(174 174 174 / 0.56) 0%, transparent 70%),
+    radial-gradient(ellipse 8% 10% at 84% 90%, rgb(160 160 160 / 0.6) 0%, transparent 68%),
+    radial-gradient(ellipse 9% 8% at 96% 74%, rgb(200 200 200 / 0.48) 0%, transparent 72%);
+  animation: veil-fog-drift 22s ease-in-out infinite;
 }
 
 .veil-fog.is-back {
-  animation-duration: 23s;
+  filter: blur(8px);
+  animation-duration: 34s;
   animation-direction: reverse;
-  opacity: 0.9;
+  opacity: 0.82;
   background:
-    radial-gradient(ellipse 40% 38% at 80% 60%, #2a2925 0%, transparent 68%),
-    radial-gradient(ellipse 52% 30% at 35% 18%, #161513 0%, transparent 64%),
-    radial-gradient(ellipse 34% 44% at 12% 70%, #3a3832 0%, transparent 66%);
+    radial-gradient(ellipse 10% 8% at 12% 12%, rgb(142 142 142 / 0.72) 0%, transparent 66%),
+    radial-gradient(ellipse 8% 11% at 28% 6%, rgb(190 190 190 / 0.5) 0%, transparent 70%),
+    radial-gradient(ellipse 11% 7% at 44% 16%, rgb(156 156 156 / 0.62) 0%, transparent 68%),
+    radial-gradient(ellipse 7% 9% at 60% 8%, rgb(134 134 134 / 0.7) 0%, transparent 64%),
+    radial-gradient(ellipse 9% 8% at 76% 18%, rgb(178 178 178 / 0.54) 0%, transparent 70%),
+    radial-gradient(ellipse 8% 10% at 90% 6%, rgb(204 204 204 / 0.46) 0%, transparent 72%),
+    radial-gradient(ellipse 10% 7% at 8% 32%, rgb(166 166 166 / 0.58) 0%, transparent 70%),
+    radial-gradient(ellipse 7% 8% at 22% 40%, rgb(140 140 140 / 0.68) 0%, transparent 66%),
+    radial-gradient(ellipse 12% 9% at 38% 28%, rgb(196 196 196 / 0.48) 0%, transparent 72%),
+    radial-gradient(ellipse 8% 7% at 54% 38%, rgb(150 150 150 / 0.64) 0%, transparent 68%),
+    radial-gradient(ellipse 9% 10% at 70% 26%, rgb(174 174 174 / 0.56) 0%, transparent 70%),
+    radial-gradient(ellipse 7% 8% at 86% 42%, rgb(130 130 130 / 0.74) 0%, transparent 64%),
+    radial-gradient(ellipse 11% 8% at 14% 54%, rgb(184 184 184 / 0.52) 0%, transparent 70%),
+    radial-gradient(ellipse 8% 9% at 30% 62%, rgb(144 144 144 / 0.66) 0%, transparent 66%),
+    radial-gradient(ellipse 10% 7% at 46% 52%, rgb(208 208 208 / 0.44) 0%, transparent 72%),
+    radial-gradient(ellipse 7% 11% at 62% 64%, rgb(162 162 162 / 0.6) 0%, transparent 68%),
+    radial-gradient(ellipse 9% 8% at 78% 56%, rgb(136 136 136 / 0.7) 0%, transparent 66%),
+    radial-gradient(ellipse 8% 7% at 94% 68%, rgb(180 180 180 / 0.54) 0%, transparent 70%),
+    radial-gradient(ellipse 10% 9% at 6% 78%, rgb(152 152 152 / 0.62) 0%, transparent 68%),
+    radial-gradient(ellipse 7% 8% at 24% 86%, rgb(198 198 198 / 0.48) 0%, transparent 72%),
+    radial-gradient(ellipse 11% 7% at 40% 74%, rgb(140 140 140 / 0.68) 0%, transparent 66%),
+    radial-gradient(ellipse 8% 10% at 56% 88%, rgb(170 170 170 / 0.58) 0%, transparent 70%),
+    radial-gradient(ellipse 9% 8% at 72% 80%, rgb(132 132 132 / 0.72) 0%, transparent 64%),
+    radial-gradient(ellipse 7% 9% at 88% 90%, rgb(188 188 188 / 0.5) 0%, transparent 70%);
 }
 
 @keyframes veil-fog-drift {
   0%,
   100% {
-    transform: translate(0, 0) scale(1);
+    transform: translate(0, 0) scale(1) rotate(0deg);
   }
-  40% {
-    transform: translate(5%, -4%) scale(1.06);
+  35% {
+    transform: translate(10%, -8%) scale(1.12) rotate(2.5deg);
   }
   70% {
-    transform: translate(-4%, 5%) scale(1.03);
+    transform: translate(-9%, 10%) scale(1.06) rotate(-2deg);
+  }
+}
+
+@keyframes veil-fog-mist {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1.05);
+  }
+  50% {
+    transform: translate(-8%, 6%) scale(1.14);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .veil-fog {
+  .veil-fog,
+  .veil-fog-clip::before {
     animation: none;
   }
 }
@@ -1828,6 +1921,21 @@ body.is-card-dragging .encounter-roster {
   cursor: default;
 }
 
+.token-combat-btn.is-damage {
+  color: #8b0000;
+}
+
+.token-combat-btn.is-heal {
+  color: #c62828;
+}
+
+.token-combat-icon {
+  display: block;
+  width: calc(var(--token-ctrl-size) * var(--board-zoom) * 0.52);
+  height: calc(var(--token-ctrl-size) * var(--board-zoom) * 0.52);
+  margin: auto;
+}
+
 .bg-card-picker {
   width: min(420px, 92vw);
   max-height: min(70vh, 560px);
@@ -1973,6 +2081,45 @@ body.is-card-dragging .encounter-roster {
   pointer-events: none;
 }
 
+.token-art-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+}
+
+.token.is-downed .token-art {
+  filter: grayscale(1) brightness(0.72);
+  opacity: 0.5;
+}
+
+.token-down-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      to top left,
+      transparent calc(50% - 2px),
+      rgb(180 30 30 / 0.9) calc(50% - 2px),
+      rgb(180 30 30 / 0.9) calc(50% + 2px),
+      transparent calc(50% + 2px)
+    ),
+    linear-gradient(
+      to top right,
+      transparent calc(50% - 2px),
+      rgb(180 30 30 / 0.9) calc(50% - 2px),
+      rgb(180 30 30 / 0.9) calc(50% + 2px),
+      transparent calc(50% + 2px)
+    );
+}
+
+.token.is-downed .token-name {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+
 .token-name {
   font-size: calc(9px * var(--board-zoom));
   line-height: 1.15;
@@ -2099,6 +2246,7 @@ body.is-card-dragging .encounter-roster {
 }
 
 .board-zoom,
+.board-set-stage,
 .board-reset,
 .lift {
   position: static;
@@ -2121,8 +2269,47 @@ body.is-card-dragging .encounter-roster {
   background: #2f2a24;
 }
 
+.board-set-stage {
+  background: #6b8f3a;
+}
+
 .board-reset {
   background: #3d7ea6;
+}
+
+.board-reset:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.stage-set-toast {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.stage-set-toast p {
+  margin: 0;
+  padding: 16px 28px;
+  border-radius: 16px;
+  background: rgb(11 9 7 / 0.88);
+  border: 1px solid rgb(212 164 90 / 0.35);
+  font-family: var(--font-display);
+  font-size: clamp(24px, 5vw, 36px);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--ink);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.board-reset-confirm,
+.board-set-stage-confirm {
+  background: #3d7ea6;
+  border-color: #3d7ea6;
+  color: #fff;
 }
 
 .lift {
@@ -2135,7 +2322,7 @@ body.is-card-dragging .encounter-roster {
   bottom: max(12px, env(safe-area-inset-bottom));
   z-index: 10;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: flex-end;
   gap: 8px;
   pointer-events: none;
@@ -2149,29 +2336,43 @@ body.is-card-dragging .encounter-roster {
   display: flex;
   flex-direction: column-reverse;
   align-items: flex-end;
-  gap: 4px;
+  justify-content: flex-end;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
-  max-height: 180px;
+  height: calc(var(--tap) + 20px);
   overflow: hidden;
 }
 
 .table-dice-log-entry {
-  min-width: var(--tap);
-  min-height: 28px;
-  padding: 4px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 2.5em;
+  height: calc((var(--tap) + 16px) / 3);
+  padding: 0 8px;
   border-radius: 999px;
   background: rgb(11 9 7 / 0.72);
   border: 1px solid var(--line);
   color: var(--ink);
   font-variant-numeric: tabular-nums;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+
+.table-dice-log-formula {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--muted, #c8c2b8);
 }
 
 .table-dice-log-total {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
+  line-height: 1;
   color: var(--brass);
 }
 
@@ -2554,6 +2755,62 @@ body.is-card-dragging .encounter-roster {
       calc(var(--token-art-size) * -0.5)
     )
     scale(calc(1 / var(--board-zoom)));
+}
+
+.combat-token-glow {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  width: calc(var(--token-art-size) * var(--board-zoom));
+  height: calc(var(--token-art-size) * var(--board-zoom));
+  overflow: visible;
+  transform-origin: 0 0;
+  transform: translate(
+      calc(var(--token-art-size) * -0.5),
+      calc(var(--token-art-size) * -0.5)
+    )
+    scale(calc(1 / var(--board-zoom)));
+}
+
+.combat-token-glow-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  opacity: 0;
+  animation: combat-token-glow-pulse 1s ease-out forwards;
+}
+
+.combat-token-glow.is-damage .combat-token-glow-ring {
+  box-shadow:
+    0 0 0 3px rgb(220 45 45 / 0.95),
+    0 0 24px 10px rgb(220 45 45 / 0.55),
+    0 0 48px 20px rgb(220 45 45 / 0.25);
+}
+
+.combat-token-glow.is-heal .combat-token-glow-ring {
+  box-shadow:
+    0 0 0 3px rgb(45 190 95 / 0.95),
+    0 0 24px 10px rgb(45 190 95 / 0.55),
+    0 0 48px 20px rgb(45 190 95 / 0.25);
+}
+
+@keyframes combat-token-glow-pulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .combat-token-glow-ring {
+    animation: none;
+    transform: scale(1.1);
+    opacity: 0;
+  }
 }
 
 .initiative-turn-arrow {

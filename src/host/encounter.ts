@@ -1,3 +1,4 @@
+import { cardVisibleForSession } from "./cardModel";
 import {
   newTokenId,
   newVeilId,
@@ -14,6 +15,7 @@ import {
   type BattlegroundToken,
   type EncounterBoard,
   type EncounterBlock,
+  type EncounterStageSnapshot,
   type EncounterState,
   type Entity,
   type RunCard,
@@ -31,6 +33,7 @@ export function emptyEncounterBoard(): EncounterBoard {
     tokenSize: board.tokenSize,
     initiativeEnabled: false,
     initiativeOrder: [],
+    stage: null,
   };
 }
 
@@ -49,6 +52,7 @@ export function boardOf(state: EncounterBoard): EncounterBoard {
     tokenSize: state.tokenSize,
     initiativeEnabled: state.initiativeEnabled,
     initiativeOrder: state.initiativeOrder,
+    stage: state.stage,
   };
 }
 
@@ -107,10 +111,11 @@ export function combatHpForToken(
     }
     return { maxHp: stats.maxHp, currentHp: stats.currentHp, currentOwnedBy: "card" };
   }
-  if (token.currentHp === null) {
+  const currentHp = instanceCurrentHpFor(entity, token.currentHp);
+  if (currentHp === null) {
     throw new Error(`NPC “${token.label}” in this encounter is missing current HP`);
   }
-  return { maxHp: stats.maxHp, currentHp: token.currentHp, currentOwnedBy: "token" };
+  return { maxHp: stats.maxHp, currentHp, currentOwnedBy: "token" };
 }
 
 /** NPC instances own current HP on the token; players keep it on the card. */
@@ -228,6 +233,111 @@ export function encounterCardTitle(mapTitle: string | null): string {
   return `${mapTitle ?? "Free"} encounter`;
 }
 
+export function playerEntitiesForSession(
+  entities: ReadonlyArray<Entity>,
+  sessionId: SessionId,
+): Entity[] {
+  return entities.filter(
+    (entity) => isPlayerCard(entity) && cardVisibleForSession(entity, sessionId),
+  );
+}
+
+export function captureStageSnapshot(board: EncounterBoard): EncounterStageSnapshot {
+  return {
+    mapMediaId: board.mapMediaId,
+    gridSize: board.gridSize,
+    tokenSize: board.tokenSize,
+    tokens: board.tokens.map((token) => ({
+      ...token,
+      tracks: cloneTracks(token.tracks),
+      conditions: [...token.conditions],
+    })),
+    veils: board.veils.map((veil) => ({ ...veil })),
+  };
+}
+
+export function cloneStageSnapshot(stage: EncounterStageSnapshot): EncounterStageSnapshot {
+  return {
+    mapMediaId: stage.mapMediaId,
+    gridSize: stage.gridSize,
+    tokenSize: stage.tokenSize,
+    tokens: stage.tokens.map((token) => ({
+      ...token,
+      tracks: cloneTracks(token.tracks),
+      conditions: [...token.conditions],
+    })),
+    veils: stage.veils.map((veil) => ({ ...veil })),
+  };
+}
+
+function resetTokenForStage(
+  token: BattlegroundToken,
+  entities: ReadonlyArray<Entity>,
+): BattlegroundToken {
+  const base: BattlegroundToken = {
+    ...token,
+    tracks: cloneTracks(token.tracks),
+    conditions: [...token.conditions],
+    initiativeRoll: null,
+    initiativeBonus: null,
+  };
+  if (token.entityId === null) {
+    return base;
+  }
+  const entity = entities.find((item) => item.id === token.entityId);
+  if (entity === undefined || !isNpcCard(entity)) {
+    return base;
+  }
+  return { ...base, currentHp: instanceCurrentHpFor(entity, null) };
+}
+
+export function ensurePlayerTokens(
+  board: EncounterBoard,
+  entities: ReadonlyArray<Entity>,
+  sessionId: SessionId,
+): EncounterBoard {
+  const players = playerEntitiesForSession(entities, sessionId);
+  const present = new Set(
+    board.tokens
+      .filter((token) => token.entityId !== null)
+      .map((token) => token.entityId as EntityId),
+  );
+  let tokens = [...board.tokens];
+  let layoutIndex = cardTokens({ ...board, tokens }).length;
+  for (const player of players) {
+    if (present.has(player.id)) {
+      continue;
+    }
+    tokens.push(tokenFromEntity(player, layoutIndex, board.live, null));
+    layoutIndex++;
+  }
+  if (tokens.length === board.tokens.length) {
+    return board;
+  }
+  return { ...board, tokens };
+}
+
+export function applyStageReset(
+  board: EncounterBoard,
+  stage: EncounterStageSnapshot,
+  entities: ReadonlyArray<Entity>,
+  sessionId: SessionId,
+): EncounterBoard {
+  const tokens = stage.tokens.map((token) => resetTokenForStage(token, entities));
+  const next: EncounterBoard = {
+    ...board,
+    mapMediaId: stage.mapMediaId,
+    gridSize: stage.gridSize,
+    tokenSize: stage.tokenSize,
+    tokens,
+    veils: stage.veils.map((veil) => ({ ...veil })),
+    activeIndex: 0,
+    initiativeEnabled: false,
+    initiativeOrder: [],
+  };
+  return ensurePlayerTokens(next, entities, sessionId);
+}
+
 export function battlemapTitleForMedia(
   entities: ReadonlyArray<Entity>,
   mapMediaId: MediaId | null,
@@ -264,6 +374,7 @@ export function cloneEncounterBoard(board: EncounterBoard): EncounterBoard {
   }));
   return {
     ...boardOf(board),
+    stage: board.stage === null ? null : cloneStageSnapshot(board.stage),
     tokens,
     veils,
     initiativeEnabled: false,

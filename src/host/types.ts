@@ -334,6 +334,14 @@ export type LogEntry = {
   createdAt: IsoDateTime;
 };
 
+export type EncounterStageSnapshot = {
+  mapMediaId: MediaId | null;
+  gridSize: number | null;
+  tokenSize: number;
+  tokens: ReadonlyArray<BattlegroundToken>;
+  veils: ReadonlyArray<BattlegroundVeil>;
+};
+
 export type EncounterBoard = {
   activeIndex: number;
   mapMediaId: MediaId | null;
@@ -346,6 +354,8 @@ export type EncounterBoard = {
   initiativeEnabled: boolean;
   /** Turn order by token id. Indexes `activeIndex` when initiative is on. */
   initiativeOrder: ReadonlyArray<TokenId>;
+  /** Saved opening layout for reset. `null` until the GM sets the stage. */
+  stage: EncounterStageSnapshot | null;
 };
 
 export type EncounterBlock = { kind: "encounter" } & EncounterBoard;

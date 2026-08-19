@@ -32,6 +32,7 @@ import {
   type VeilKind,
   type Campaign,
   type EncounterBoard,
+  type EncounterStageSnapshot,
   type EncounterState,
   type Entity,
   type EntityLifecycle,
@@ -352,6 +353,7 @@ export function readEncounterBoard(
     tokenSize: readTokenSize(record.tokenSize, record.gridSize, ownerId, warnings),
     initiativeEnabled,
     initiativeOrder,
+    stage: readStageSnapshot(record.stage, ownerId, warnings, store),
   };
 }
 
@@ -652,6 +654,34 @@ function readTokens(
     });
   }
   return tokens;
+}
+
+function readStageSnapshot(
+  value: unknown,
+  ownerId: string,
+  warnings: MigrationWarning[],
+  store: "encounters" | "entities",
+): EncounterStageSnapshot | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const record = asObject(value, store, ownerId, warnings);
+  if (!record) {
+    warnings.push({ store, id: ownerId, message: "stage was not an object and was cleared" });
+    return null;
+  }
+  const mapMediaId = record.mapMediaId;
+  const board = emptyBattleground();
+  return {
+    mapMediaId: typeof mapMediaId === "string" ? asMediaId(mapMediaId) : null,
+    gridSize:
+      record.gridSize === undefined
+        ? board.gridSize
+        : readGridSize(record.gridSize, ownerId, warnings),
+    tokenSize: readTokenSize(record.tokenSize, record.gridSize, ownerId, warnings),
+    tokens: readTokens(record.tokens, ownerId, warnings, store),
+    veils: readVeils(record.veils, ownerId, warnings, store),
+  };
 }
 
 function readVeils(

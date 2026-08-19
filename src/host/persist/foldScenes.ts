@@ -48,6 +48,7 @@ export function foldScenesIntoEncounters(
       tokenSize: board.tokenSize,
       initiativeEnabled: false,
       initiativeOrder: [],
+      stage: null,
     });
   }
 
@@ -65,6 +66,7 @@ export function withBoardDefaults(encounter: EncounterState): EncounterState {
         : fallback.tokenSize,
     initiativeEnabled: encounter.initiativeEnabled === true,
     initiativeOrder: encounter.initiativeOrder ?? [],
+    stage: encounter.stage ?? null,
   };
 }
 

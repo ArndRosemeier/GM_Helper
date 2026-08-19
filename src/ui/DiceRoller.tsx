@@ -7,13 +7,13 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type DiceBox from "@3d-dice/dice-box";
-import type { DiceBoxRollDie, DiceBoxRollGroup } from "@3d-dice/dice-box";
+import type { DiceBoxRollDie } from "@3d-dice/dice-box";
 
-export type DieSides = 4 | 6 | 8 | 10 | 12 | 20;
+export type DieSides = 4 | 6 | 8 | 10 | 12 | 20 | 100;
 
-const STANDARD_DICE: readonly DieSides[] = [4, 6, 8, 10, 12, 20];
+const STANDARD_DICE: readonly DieSides[] = [4, 6, 8, 10, 12, 20, 100];
 const MODIFIER_STEPS = [1, 2, 5, 10, 20] as const;
-const LOG_LIMIT = 8;
+const LOG_LIMIT = 3;
 const DICE_BOX_CONTAINER_ID = "encounter-dice-box";
 
 type TrayDie = {
@@ -39,10 +39,17 @@ type LogEntry = {
   summary: string;
 };
 
+export type CombatRollPurpose = {
+  kind: "damage" | "heal";
+  subject: string;
+  onResult: (total: number) => void;
+};
+
 export function useEncounterDice(): {
   hud: ReactNode;
   stage: ReactNode;
   overlays: ReactNode;
+  openCombatRoll: (purpose: CombatRollPurpose) => void;
 } {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [tray, setTray] = useState<TrayState>({ dice: [], modifier: 0 });
@@ -50,8 +57,10 @@ export function useEncounterDice(): {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [boxReady, setBoxReady] = useState(false);
   const [boxError, setBoxError] = useState<string | null>(null);
+  const [rollPurpose, setRollPurpose] = useState<CombatRollPurpose | null>(null);
   const boxRef = useRef<DiceBox | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const rollPurposeRef = useRef<CombatRollPurpose | null>(null);
 
   useEffect(() => {
     const container = stageRef.current;
@@ -125,12 +134,37 @@ export function useEncounterDice(): {
     };
   }, []);
 
+  const clearRollPurpose = (): void => {
+    rollPurposeRef.current = null;
+    setRollPurpose(null);
+  };
+
   const openPicker = (): void => {
     if (roll !== null) {
       return;
     }
+    clearRollPurpose();
     setTray({ dice: [], modifier: 0 });
     setPickerOpen(true);
+  };
+
+  const openCombatRoll = (purpose: CombatRollPurpose): void => {
+    if (roll !== null) {
+      return;
+    }
+    rollPurposeRef.current = purpose;
+    setRollPurpose(purpose);
+    setTray({ dice: [], modifier: 0 });
+    setPickerOpen(true);
+  };
+
+  const applyRollPurpose = (total: number): void => {
+    const purpose = rollPurposeRef.current;
+    if (purpose === null) {
+      return;
+    }
+    purpose.onResult(total);
+    clearRollPurpose();
   };
 
   const addDie = (sides: DieSides): void => {
@@ -174,7 +208,8 @@ export function useEncounterDice(): {
 
     const summary = formatTraySummary(tray);
     const modifier = tray.modifier;
-    const notation = buildNotation(tray.dice);
+    const percentileCount = countPercentileDice(tray.dice);
+    const notation = buildEngineNotation(tray.dice);
     setPickerOpen(false);
     setTray({ dice: [], modifier: 0 });
 
@@ -185,6 +220,7 @@ export function useEncounterDice(): {
         settled: true,
         hasDice: false,
       });
+      applyRollPurpose(modifier);
       setLog((current) => trimLog([{ id: crypto.randomUUID(), total: modifier, summary }, ...current]));
       return;
     }
@@ -204,14 +240,14 @@ export function useEncounterDice(): {
     void box
       .roll(notation)
       .then((dieResults) => {
-        const groups = box.getRollResults();
-        const total = sumRollTotal(dieResults, groups, modifier);
+        const total = sumRollTotal(dieResults, modifier, percentileCount);
         setRoll({
           total,
           summary,
           settled: true,
           hasDice: true,
         });
+        applyRollPurpose(total);
         setLog((current) => trimLog([{ id: crypto.randomUUID(), total, summary }, ...current]));
       })
       .catch((error: unknown) => {
@@ -225,13 +261,20 @@ export function useEncounterDice(): {
   const canRoll = tray.dice.length > 0 || tray.modifier > 0;
   const rolling = roll !== null && !roll.settled;
 
+  const closePicker = (): void => {
+    clearRollPurpose();
+    setPickerOpen(false);
+  };
+
   return {
+    openCombatRoll,
     hud: (
       <div className="table-dice-hud">
         {log.length > 0 ? (
           <ol className="table-dice-log" aria-label="Recent dice rolls">
             {log.map((entry) => (
-              <li key={entry.id} className="table-dice-log-entry" title={entry.summary}>
+              <li key={entry.id} className="table-dice-log-entry">
+                <span className="table-dice-log-formula">{entry.summary}</span>
                 <span className="table-dice-log-total">{entry.total}</span>
               </li>
             ))}
@@ -265,7 +308,14 @@ export function useEncounterDice(): {
                 canRoll={canRoll}
                 boxReady={boxReady}
                 boxError={boxError}
-                onClose={() => setPickerOpen(false)}
+                title={
+                  rollPurpose === null
+                    ? "Dice"
+                    : rollPurpose.kind === "damage"
+                      ? `Damage — ${rollPurpose.subject}`
+                      : `Heal — ${rollPurpose.subject}`
+                }
+                onClose={closePicker}
                 onAddDie={addDie}
                 onRemoveDie={removeDie}
                 onAddModifier={addModifier}
@@ -292,6 +342,7 @@ function DicePickerModal({
   canRoll,
   boxReady,
   boxError,
+  title,
   onClose,
   onAddDie,
   onRemoveDie,
@@ -304,6 +355,7 @@ function DicePickerModal({
   canRoll: boolean;
   boxReady: boolean;
   boxError: string | null;
+  title: string;
   onClose: () => void;
   onAddDie: (sides: DieSides) => void;
   onRemoveDie: (id: string) => void;
@@ -329,7 +381,7 @@ function DicePickerModal({
         onPointerDown={(event) => event.stopPropagation()}
       >
         <p className="eyebrow">Encounter</p>
-        <h2 id={titleId}>Dice</h2>
+        <h2 id={titleId}>{title}</h2>
 
         <div className="dice-roller-section">
           <p className="dice-roller-label">Dice</p>
@@ -339,11 +391,11 @@ function DicePickerModal({
                 key={sides}
                 type="button"
                 className="dice-roller-die-btn"
-                aria-label={`Add d${String(sides)}`}
+                aria-label={`Add ${dieDisplayName(sides)}`}
                 onClick={() => onAddDie(sides)}
               >
                 <DieGlyph sides={sides} spin />
-                <span className="dice-roller-die-name">d{sides}</span>
+                <span className="dice-roller-die-name">{dieDisplayName(sides)}</span>
               </button>
             ))}
           </div>
@@ -385,11 +437,11 @@ function DicePickerModal({
                     key={die.id}
                     type="button"
                     className="dice-roller-tray-chip"
-                    aria-label={`Remove d${String(die.sides)}`}
+                    aria-label={`Remove ${dieDisplayName(die.sides)}`}
                     onClick={() => onRemoveDie(die.id)}
                   >
                     <DieGlyph sides={die.sides} />
-                    <span>d{die.sides}</span>
+                    <span>{dieDisplayName(die.sides)}</span>
                   </button>
                 ))}
                 {tray.modifier > 0 ? (
@@ -464,7 +516,7 @@ function DieGlyph({ sides, spin = false }: { sides: DieSides; spin?: boolean }) 
         textAnchor="middle"
         dominantBaseline="central"
       >
-        {sides}
+        {sides === 100 ? "%" : String(sides)}
       </text>
     </svg>
   );
@@ -519,6 +571,16 @@ const DIE_SHAPES: Record<DieSides, DieShape> = {
     ],
     label: { x: 66, y: 41, size: 14 },
   },
+  100: {
+    facets: [
+      { points: "6,46 28,62 50,94", tone: "low" },
+      { points: "94,46 72,62 50,94", tone: "mid" },
+      { points: "28,62 50,46 72,62 50,94", tone: "low" },
+      { points: "50,6 6,46 28,62 50,46", tone: "mid" },
+      { points: "50,6 50,46 72,62 94,46", tone: "hi" },
+    ],
+    label: { x: 66, y: 41, size: 18 },
+  },
   12: {
     facets: [
       { points: "50,22 72.8,38.6 91.8,65.6 75.9,16.4", tone: "mid" },
@@ -547,30 +609,104 @@ const DIE_SHAPES: Record<DieSides, DieShape> = {
   },
 };
 
-function buildNotation(dice: TrayDie[]): string[] {
+function dieDisplayName(sides: DieSides): string {
+  return sides === 100 ? "w%" : `d${String(sides)}`;
+}
+
+function countPercentileDice(dice: TrayDie[]): number {
+  return dice.filter((die) => die.sides === 100).length;
+}
+
+function countDiceBySides(dice: TrayDie[]): Map<DieSides, number> {
   const counts = new Map<DieSides, number>();
   for (const die of dice) {
     counts.set(die.sides, (counts.get(die.sides) ?? 0) + 1);
   }
-  return [...counts.entries()].map(([sides, qty]) => `${String(qty)}d${String(sides)}`);
+  return counts;
+}
+
+function formatDieGroup(sides: DieSides, qty: number): string {
+  if (sides === 100) {
+    return qty === 1 ? "w%" : `${String(qty)}w%`;
+  }
+  return `${String(qty)}d${String(sides)}`;
+}
+
+function buildEngineNotation(dice: TrayDie[]): string[] {
+  const counts = countDiceBySides(dice);
+  const notation: string[] = [];
+  for (const sides of STANDARD_DICE) {
+    if (sides === 100) {
+      continue;
+    }
+    const qty = counts.get(sides) ?? 0;
+    if (qty > 0) {
+      notation.push(`${String(qty)}d${String(sides)}`);
+    }
+  }
+  const percentileCount = counts.get(100) ?? 0;
+  if (percentileCount > 0) {
+    notation.push(`${String(percentileCount)}d100`);
+  }
+  return notation;
 }
 
 function formatTraySummary(tray: TrayState): string {
-  const parts = buildNotation(tray.dice);
-  if (tray.modifier > 0) {
-    parts.push(`+${String(tray.modifier)}`);
+  const counts = countDiceBySides(tray.dice);
+  const parts: string[] = [];
+  for (const sides of STANDARD_DICE) {
+    const qty = counts.get(sides) ?? 0;
+    if (qty > 0) {
+      parts.push(formatDieGroup(sides, qty));
+    }
   }
-  return parts.join(" · ");
+  const dice = parts.join("+");
+  if (tray.modifier > 0) {
+    return dice.length > 0 ? `${dice}+${String(tray.modifier)}` : `+${String(tray.modifier)}`;
+  }
+  return dice;
 }
 
-function sumRollTotal(dieResults: DiceBoxRollDie[], groups: DiceBoxRollGroup[], modifier: number): number {
-  if (groups.length > 0) {
-    const groupSum = groups.reduce((sum, group) => sum + group.value, 0);
-    // Groups already include any notation modifiers; we keep ours separate.
-    return groupSum + modifier;
+function numericDieSides(sides: number | string): number {
+  if (typeof sides === "number") {
+    return sides;
   }
-  const diceSum = dieResults.reduce((sum, die) => sum + die.value, 0);
-  return diceSum + modifier;
+  const parsed = Number(sides.replace(/^d/u, ""));
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Unknown die sides: ${sides}`);
+  }
+  return parsed;
+}
+
+function percentileFaceTotal(value: number): number {
+  return value === 0 ? 100 : value;
+}
+
+function sumRollTotal(
+  dieResults: DiceBoxRollDie[],
+  modifier: number,
+  percentileCount: number,
+): number {
+  const percentiles: number[] = [];
+  let otherSum = 0;
+  for (const die of dieResults) {
+    const sides = numericDieSides(die.sides);
+    if (sides === 100) {
+      percentiles.push(die.value);
+    } else {
+      otherSum += die.value;
+    }
+  }
+  if (percentiles.length !== percentileCount) {
+    throw new Error(
+      `Expected ${String(percentileCount)} percentile dice, got ${String(percentiles.length)}`,
+    );
+  }
+  const percentileSum = percentiles.reduce(
+    (sum, value) => sum + percentileFaceTotal(value),
+    0,
+  );
+  return percentileSum + otherSum + modifier;
 }
 
 function trimLog(entries: LogEntry[]): LogEntry[] {

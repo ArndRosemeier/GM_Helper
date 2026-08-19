@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cardOriginal, cardTypeLabel } from "../host/cardModel";
-import { combatHpForToken, isEncounterCard } from "../host/encounter";
+import { combatHpForToken, isEncounterCard, isPlayerCard } from "../host/encounter";
 import { useHost } from "../host/HostContext";
 import { asSessionId } from "../host/ids";
 import type { FocusCardProps } from "../host/features/types";
@@ -168,7 +168,7 @@ export function EntityCard({
         {tokenUrl ? (
           <img className="card-token" src={tokenUrl} alt="" />
         ) : null}
-        {snap.session && snap.surface !== "table" && !encounterCard ? (
+        {snap.session && snap.surface !== "table" && !encounterCard && !isPlayerCard(entity) ? (
           <button
             type="button"
             className="card-drag-handle"
@@ -186,7 +186,7 @@ export function EntityCard({
           onPointerDown={(event) => {
             // Mouse/pen: drag from the title like before. Touch keeps scrolling;
             // use the handle there.
-            if (!snap.session || snap.surface === "table" || encounterCard || event.pointerType === "touch") {
+            if (!snap.session || snap.surface === "table" || encounterCard || isPlayerCard(entity) || event.pointerType === "touch") {
               return;
             }
             drag.onPointerDown(event);
