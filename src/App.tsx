@@ -1,13 +1,34 @@
-import { Suspense } from "react";
+import { Suspense, lazy } from "react";
 import { HostProvider, useHost } from "./host/HostContext";
 import { HomeShell } from "./ui/HomeShell";
 import { PrepView } from "./ui/PrepView";
 import { SettingsView } from "./ui/SettingsView";
 import { BusyModal } from "./ui/BusyModal";
 import { ErrorBanner } from "./ui/ErrorBanner";
+import { MediaViewer } from "./ui/MediaViewer";
+import { UrlViewer } from "./ui/UrlViewer";
 import { useUiScale } from "./ui/useUiScale";
 import { featureRegistry } from "./host/features/singleton";
 import "./features/registerAll";
+
+const SourceViewer = lazy(() =>
+  import("./ui/SourceViewer").then((module) => ({ default: module.SourceViewer })),
+);
+
+function GlobalOverlays() {
+  const { snap } = useHost();
+  return (
+    <>
+      {snap.mediaViewEntityId ? <MediaViewer /> : null}
+      {snap.sourceView ? (
+        <Suspense fallback={null}>
+          <SourceViewer />
+        </Suspense>
+      ) : null}
+      {snap.urlView ? <UrlViewer /> : null}
+    </>
+  );
+}
 
 function Surfaces() {
   const { store, snap } = useHost();
@@ -42,6 +63,7 @@ function Surfaces() {
         <Suspense fallback={<p className="muted boot">Loading battleground…</p>}>
           <Player />
         </Suspense>
+        <GlobalOverlays />
       </div>
     );
   }
@@ -54,6 +76,7 @@ function Surfaces() {
       <ErrorBanner />
       <BusyModal />
       {body}
+      <GlobalOverlays />
     </div>
   );
 }

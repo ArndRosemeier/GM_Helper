@@ -6,6 +6,7 @@ import { loadPdf, type LoadedPdf } from "../lib/pdfPage";
 import { runAddCardWithAi } from "./aiPdfCard";
 import { AiTopicModal } from "./AiTopicModal";
 import { FlashToast, useFlashToast } from "./FlashToast";
+import { Modal } from "./Modal";
 import { NameCardModal } from "./NameCardModal";
 import { PdfPageNav } from "./PdfPageNav";
 import { PdfPageView } from "./PdfPageView";
@@ -172,8 +173,16 @@ export function SourceViewer() {
     );
   };
 
+  const title = source?.title ?? "Source";
+
   return (
-    <section className="source-viewer">
+    <Modal
+      title={title}
+      onClose={() => store.closeSourceView()}
+      closeOnBackdrop={false}
+      className="source-viewer-modal"
+      cardClassName="source-viewer"
+    >
       <header className="source-viewer-bar">
         {source?.kind === "pdf" && pdf ? (
           <PdfPageNav
@@ -182,17 +191,18 @@ export function SourceViewer() {
             onChange={setViewPage}
             onCommit={(next) => store.setSourceViewPage(next)}
           />
-        ) : null}
+        ) : (
+          <div>
+            <p className="eyebrow">Source</p>
+            <h2>{title}</h2>
+          </div>
+        )}
         <div className="card-actions source-save-row">
           <button type="button" onClick={() => setPending({ kind: "page", picture: selectedImage })}>
             Add card
           </button>
           {source?.kind === "pdf" ? (
-            <button
-              type="button"
-              disabled={snap.busy !== null}
-              onClick={onAddCardWithAi}
-            >
+            <button type="button" disabled={snap.busy !== null} onClick={onAddCardWithAi}>
               Add card with AI
             </button>
           ) : null}
@@ -274,6 +284,6 @@ export function SourceViewer() {
         />
       ) : null}
       <FlashToast message={flashMessage} />
-    </section>
+    </Modal>
   );
 }

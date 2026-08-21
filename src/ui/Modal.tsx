@@ -5,6 +5,7 @@ import {
   useId,
   useLayoutEffect,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -14,6 +15,9 @@ const ModalDepthContext = createContext(0);
 
 const BASE_Z = 10_000;
 const Z_STEP = 10;
+
+/** Monotonic layer so modals opened from anywhere stack above older ones. */
+let nextModalLayer = 0;
 
 type CloseHandler = () => void;
 
@@ -74,7 +78,11 @@ export function Modal({
   closeOnEscape?: boolean;
 }) {
   const parentDepth = useContext(ModalDepthContext);
-  const depth = parentDepth + 1;
+  const [mountLayer] = useState(() => {
+    nextModalLayer += 1;
+    return nextModalLayer;
+  });
+  const depth = Math.max(parentDepth + 1, mountLayer);
   const autoTitleId = useId();
   const labelledBy = titleId ?? (title !== undefined ? autoTitleId : undefined);
   const onCloseRef = useRef(onClose);

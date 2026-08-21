@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useHost } from "../host/HostContext";
 import { iframeEmbedStatus } from "../lib/iframeEmbed";
+import { Modal } from "./Modal";
 
 export function UrlViewer() {
   const { store, snap } = useHost();
@@ -53,11 +54,17 @@ export function UrlViewer() {
   }
 
   return (
-    <section className="source-viewer">
+    <Modal
+      title={view.href}
+      onClose={() => store.closeUrlView()}
+      closeOnBackdrop={false}
+      className="source-viewer-modal"
+      cardClassName="source-viewer url-viewer"
+    >
       <header className="source-viewer-bar">
         <div>
           <p className="eyebrow">Page</p>
-          <h2>{view.href}</h2>
+          <h2 className="url-viewer-title">{view.href}</h2>
         </div>
         <div className="card-actions">
           <button type="button" onClick={() => store.failUrlViewToTab()}>
@@ -69,6 +76,6 @@ export function UrlViewer() {
         </div>
       </header>
       <iframe className="source-frame web-frame" title={view.href} ref={frameRef} />
-    </section>
+    </Modal>
   );
 }

@@ -35,21 +35,26 @@ export function CardUrlFrame({ href }: { href: string }) {
 
   return (
     <div className="card-url">
-      {blocked ? (
-        <div className="card-actions">
-          <p className="muted">This page will not open here.</p>
-          <button
-            type="button"
-            onClick={() => {
-              if (!openExternalTab(href)) {
-                store.setError("Browser blocked the new tab.");
-              }
-            }}
-          >
-            Open in tab
-          </button>
-        </div>
-      ) : null}
+      <div className="card-actions card-url-actions">
+        <button type="button" onClick={() => store.openUrlView(href)}>
+          Open full page
+        </button>
+        {blocked ? (
+          <>
+            <p className="muted">This page will not embed here.</p>
+            <button
+              type="button"
+              onClick={() => {
+                if (!openExternalTab(href)) {
+                  store.setError("Browser blocked the new tab.");
+                }
+              }}
+            >
+              Open in tab
+            </button>
+          </>
+        ) : null}
+      </div>
       <iframe
         className={blocked ? "card-url-frame hidden-frame" : "source-frame web-frame card-url-frame"}
         title={href}
