@@ -48,46 +48,40 @@ export function useBoardPanZoom(
 ): {
   view: BoardView;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
   zoomBy: (factor: number) => void;
+  pointersDown: number;
 } {
   const [view, setView] = useState<BoardView>(START_VIEW);
   const pointers = useRef(new Map<number, BoardPointer>());
+  const [pointersDown, setPointersDown] = useState(0);
+  const windowBound = useRef(false);
+  const moveRef = useRef<(event: PointerEvent) => void>(() => undefined);
+  const upRef = useRef<(event: PointerEvent) => void>(() => undefined);
 
-  useEffect(() => {
-    const node = viewportRef.current;
-    if (!node) {
-      return;
-    }
-    const onWheel = (event: WheelEvent): void => {
-      event.preventDefault();
-      const local = clientPointInViewport(node, event.clientX, event.clientY);
-      const factor = event.ctrlKey ? Math.exp(-event.deltaY * 0.01) : event.deltaY < 0 ? 1.12 : 1 / 1.12;
-      const origin = layoutOriginRef.current;
-      setView((current) => zoomBoardView(current, local.x, local.y, factor, origin));
-    };
-    node.addEventListener("wheel", onWheel, { passive: false });
-    return () => {
-      node.removeEventListener("wheel", onWheel);
-    };
-  }, [viewportRef, layoutOriginRef]);
-
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (event.pointerType === "mouse" && event.button !== 0) {
-      return;
-    }
-    event.currentTarget.setPointerCapture(event.pointerId);
-    pointers.current.set(event.pointerId, {
-      x: event.clientX,
-      y: event.clientY,
-      originX: event.clientX,
-      originY: event.clientY,
-      panning: false,
-    });
+  const syncPointerCount = (): void => {
+    setPointersDown(pointers.current.size);
   };
 
-  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
+  const detachWindow = (): void => {
+    if (!windowBound.current) {
+      return;
+    }
+    windowBound.current = false;
+    window.removeEventListener("pointermove", onWindowMove, true);
+    window.removeEventListener("pointerup", onWindowUp, true);
+    window.removeEventListener("pointercancel", onWindowUp, true);
+  };
+
+  function onWindowMove(event: PointerEvent): void {
+    moveRef.current(event);
+  }
+
+  function onWindowUp(event: PointerEvent): void {
+    upRef.current(event);
+  }
+
+  moveRef.current = (event: PointerEvent): void => {
     const previous = pointers.current.get(event.pointerId);
     if (!previous) {
       return;
@@ -117,6 +111,7 @@ export function useBoardPanZoom(
       if (!first || !second || !firstAfter || !secondAfter) {
         return;
       }
+      event.preventDefault();
       const prevDist = distance(first, second);
       const nextDist = distance(firstAfter, secondAfter);
       const prevMid = midpoint(first, second);
@@ -138,15 +133,64 @@ export function useBoardPanZoom(
       }
       next.panning = true;
     }
+    event.preventDefault();
     const delta = clientDeltaToLocal(node, next.x - previous.x, next.y - previous.y);
     setView((current) => panBoardView(current, delta.x, delta.y));
   };
 
-  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    pointers.current.delete(event.pointerId);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
+  upRef.current = (event: PointerEvent): void => {
+    if (!pointers.current.has(event.pointerId)) {
+      return;
     }
+    pointers.current.delete(event.pointerId);
+    syncPointerCount();
+    if (pointers.current.size === 0) {
+      detachWindow();
+    }
+  };
+
+  useEffect(() => {
+    const node = viewportRef.current;
+    if (!node) {
+      return;
+    }
+    const onWheel = (event: WheelEvent): void => {
+      event.preventDefault();
+      const local = clientPointInViewport(node, event.clientX, event.clientY);
+      const factor = event.ctrlKey ? Math.exp(-event.deltaY * 0.01) : event.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const origin = layoutOriginRef.current;
+      setView((current) => zoomBoardView(current, local.x, local.y, factor, origin));
+    };
+    node.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      node.removeEventListener("wheel", onWheel);
+      detachWindow();
+      pointers.current.clear();
+    };
+  }, [viewportRef, layoutOriginRef]);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    pointers.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+      originX: event.clientX,
+      originY: event.clientY,
+      panning: false,
+    });
+    syncPointerCount();
+    if (!windowBound.current) {
+      windowBound.current = true;
+      window.addEventListener("pointermove", onWindowMove, true);
+      window.addEventListener("pointerup", onWindowUp, true);
+      window.addEventListener("pointercancel", onWindowUp, true);
+    }
+  };
+
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    upRef.current(event.nativeEvent);
   };
 
   const zoomBy = (factor: number): void => {
@@ -160,7 +204,7 @@ export function useBoardPanZoom(
     setView((current) => zoomBoardView(current, originX, originY, factor, origin));
   };
 
-  return { view, onPointerDown, onPointerMove, onPointerUp, zoomBy };
+  return { view, onPointerDown, onPointerUp, zoomBy, pointersDown };
 }
 
 export function clientPointInViewport(node: HTMLElement, clientX: number, clientY: number): { x: number; y: number } {

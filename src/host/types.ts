@@ -285,14 +285,6 @@ export type Scene = {
   order: number;
 };
 
-/** @deprecated Prefer persist/readRecord.readScene. Kept for call sites that already have a Scene. */
-export function normalizeScene(value: Scene): Scene {
-  return {
-    ...value,
-    description: typeof value.description === "string" ? value.description : "",
-  };
-}
-
 export type Source = {
   id: SourceId;
   campaignId: CampaignId;

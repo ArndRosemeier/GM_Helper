@@ -28,7 +28,7 @@ import {
 } from "../host/types";
 import { combatHpForToken, isNpcCard } from "../host/encounter";
 import { activeInitiativeTokenId } from "../host/initiative";
-import { snapBoxToGrid, snapPointToGrid, tokenSpanCells } from "../host/gridSnap";
+import { snapBoxToGrid } from "../host/gridSnap";
 import { useHost } from "../host/HostContext";
 import type { EntityId, TokenId, VeilId } from "../host/ids";
 import { defaultTokenDataUrl, tokenArtUrl } from "../lib/defaultToken";
@@ -42,18 +42,31 @@ import {
 } from "./useBoardPanZoom";
 import {
   portraitCoveredByVeils,
-  resizeVeilFromEdge,
   veilCellPx,
   type VeilEdge,
 } from "../host/veil";
 import { useEncounterDice } from "./DiceRoller";
 import { InitiativeSidebar, InitiativeTurnMarker } from "./InitiativeSidebar";
+import { Modal } from "./Modal";
+import {
+  initiativeDragEpoch,
+  subscribeInitiativeDragEpoch,
+} from "../host/initiativeDragGate";
+import { isBoardGestureActive } from "../host/boardGestureGate";
+import { getModalRoot } from "./modalRoot";
+import {
+  applyLiveStaging,
+  applyLiveToken,
+  applyLiveVeil,
+  useBoardObjectGestures,
+} from "./useBoardObjectGestures";
 
-const DRAG_THRESHOLD_PX = 8;
 const DOUBLE_TAP_MS = 500;
 const DOUBLE_TAP_PX = 32;
+const EMPTY_TAP_SLOP_PX = 8;
 /** Extra cells of floor and grid beyond the battlemap, in each direction. */
 const WORLD_PAD_CELLS = 256;
+const EMPTY_VEILS: ReadonlyArray<BattlegroundVeil> = [];
 
 export function TableSurface() {
   const { store, snap } = useHost();
@@ -74,12 +87,8 @@ export function TableSurface() {
   const emptyTapStart = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const lastEmptyTap = useRef<{ x: number; y: number; time: number } | null>(null);
   const lastTokenTap = useRef<{ tokenId: TokenId; x: number; y: number; time: number } | null>(null);
-  const dragOrigin = useRef<{ x: number; y: number; tokenId: TokenId } | null>(null);
-  const didDrag = useRef(false);
-  const veilDragOrigin = useRef<{ x: number; y: number; veilId: VeilId } | null>(null);
-  const didVeilDrag = useRef(false);
-  const stagingDragOrigin = useRef<{ x: number; y: number } | null>(null);
-  const didStagingDrag = useRef(false);
+  const cameraViewRef = useRef(camera.view);
+  cameraViewRef.current = camera.view;
   const [mapNatural, setMapNatural] = useState<{
     url: string;
     width: number;
@@ -198,8 +207,13 @@ export function TableSurface() {
 
   const mapId = snap.tableEncounter?.mapMediaId ?? null;
   const mapUrl = mapId ? snap.mediaUrls[mapId] : undefined;
-  const tokens = (snap.tableEncounter?.tokens ?? []).filter((token) => token.visible);
-  const veils = snap.tableEncounter?.veils ?? [];
+  const boardTokens = snap.tableEncounter?.tokens;
+  const boardVeils = snap.tableEncounter?.veils;
+  const tokens = useMemo(
+    () => (boardTokens ?? []).filter((token) => token.visible),
+    [boardTokens],
+  );
+  const veils = boardVeils ?? EMPTY_VEILS;
   const stagingGround = snap.tableEncounter?.stagingGround ?? null;
   const gridSize = snap.tableEncounter?.gridSize ?? null;
   const unitSize =
@@ -252,33 +266,41 @@ export function TableSurface() {
   const boardHeightPx = boardLayout !== null ? boardLayout.height : (viewportPx === null ? 0 : viewportPx.height);
   const boardReady = boardWidthPx > 0 && boardHeightPx > 0;
   const cellPx = veilCellPx(gridSize, snap.tableEncounter?.tokenSize ?? TOKEN_SIZE_DEFAULT);
-  const coveredCardIds = useMemo(
-    () =>
-      new Set(
-        boardReady
-          ? tokens
-              .filter((token) =>
-                portraitCoveredByVeils(token, veils, unitSize, cellPx, boardWidthPx, boardHeightPx),
-              )
-              .map((token) => token.id)
-          : [],
-      ),
-    [boardReady, tokens, veils, unitSize, cellPx, boardWidthPx, boardHeightPx],
-  );
-  const coveredTokenKey = useMemo(() => [...coveredCardIds].sort().join(","), [coveredCardIds]);
+  const coveredTokenKey = useMemo(() => {
+    if (!boardReady || boardTokens === undefined) {
+      return "";
+    }
+    return boardTokens
+      .filter(
+        (token) =>
+          token.visible &&
+          portraitCoveredByVeils(token, veils, unitSize, cellPx, boardWidthPx, boardHeightPx),
+      )
+      .map((token) => token.id)
+      .sort()
+      .join(",");
+  }, [boardReady, boardTokens, veils, unitSize, cellPx, boardWidthPx, boardHeightPx]);
+  const coveredCardIds = useMemo(() => {
+    if (coveredTokenKey.length === 0) {
+      return new Set<TokenId>();
+    }
+    return new Set(coveredTokenKey.split(",") as TokenId[]);
+  }, [coveredTokenKey]);
   const initiativeSyncKey = useMemo(() => {
-    const board = snap.tableEncounter;
-    if (board === null) {
+    if (boardTokens === undefined) {
       return coveredTokenKey;
     }
-    const visibility = board.tokens
+    const visibility = boardTokens
       .map((token) => `${token.id}:${token.visible ? "1" : "0"}`)
       .join(",");
     return `${visibility}|${coveredTokenKey}`;
-  }, [snap.tableEncounter, coveredTokenKey]);
+  }, [boardTokens, coveredTokenKey]);
+  const initiativeEnabled = snap.tableEncounter?.initiativeEnabled === true;
+  const [initiativeDragEpochValue, setInitiativeDragEpochValue] = useState(initiativeDragEpoch);
+  useEffect(() => subscribeInitiativeDragEpoch(() => setInitiativeDragEpochValue(initiativeDragEpoch())), []);
   const dice = useEncounterDice();
   const activeInitiativeId =
-    snap.tableEncounter !== null && snap.tableEncounter.initiativeEnabled
+    snap.tableEncounter !== null && initiativeEnabled
       ? activeInitiativeTokenId(snap.tableEncounter)
       : null;
   const activeInitiativeToken =
@@ -290,18 +312,11 @@ export function TableSurface() {
         })();
 
   useEffect(() => {
-    const board = snap.tableEncounter;
-    if (board === null || !board.initiativeEnabled || !boardReady) {
+    if (!initiativeEnabled || !boardReady) {
       return;
     }
     store.run(store.syncInitiativeRolls([...coveredCardIds]));
-  }, [
-    store,
-    snap.tableEncounter,
-    snap.entities,
-    boardReady,
-    initiativeSyncKey,
-  ]);
+  }, [store, boardReady, initiativeEnabled, initiativeSyncKey, coveredCardIds, initiativeDragEpochValue]);
 
   useLayoutEffect(() => {
     const node = viewport.current;
@@ -318,6 +333,9 @@ export function TableSurface() {
   }, []);
 
   useLayoutEffect(() => {
+    if (isBoardGestureActive()) {
+      return;
+    }
     const node = board.current;
     const gridSize = snap.tableEncounter?.gridSize ?? null;
     const hasStaging = snap.tableEncounter?.stagingGround !== null;
@@ -354,79 +372,50 @@ export function TableSurface() {
     return clientPointOnBoard(
       viewportNode,
       boardNode,
-      camera.view,
+      cameraViewRef.current,
       boardOriginRef.current,
       clientX,
       clientY,
     );
   };
 
-  const onTokenPointerDown = (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId): void => {
-    event.stopPropagation();
-    event.preventDefault();
-    didDrag.current = false;
-    dragOrigin.current = { x: event.clientX, y: event.clientY, tokenId };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const onTokenPointerMove = (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId): void => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-      return;
-    }
-    const origin = dragOrigin.current;
-    if (origin && origin.tokenId === tokenId) {
-      const dx = event.clientX - origin.x;
-      const dy = event.clientY - origin.y;
-      if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
-        didDrag.current = true;
+  const gestures = useBoardObjectGestures({
+    requireBoardPoint,
+    boardSize: () => {
+      const node = board.current;
+      if (!node || node.offsetWidth <= 0 || node.offsetHeight <= 0) {
+        return null;
       }
-    }
-    if (!didDrag.current) {
-      return;
-    }
-    const node = board.current;
-    if (!node) {
-      store.setError("Battleground board is not mounted");
-      return;
-    }
-    const raw = requireBoardPoint(event.clientX, event.clientY);
-    if (raw === null) {
-      return;
-    }
-    const gridSize = snap.tableEncounter?.gridSize ?? null;
-    if (gridSize === null) {
-      store.run(store.moveToken(tokenId, raw.x, raw.y));
-      return;
-    }
-    const token = tokens.find((item) => item.id === tokenId);
-    if (!token) {
-      store.setError(`Encounter has no token ${tokenId}`);
-      return;
-    }
-    const snapped = snapPointToGrid(
-      raw.x,
-      raw.y,
-      node.offsetWidth,
-      node.offsetHeight,
-      gridSize,
-      tokenSpanCells(token.scale),
-    );
-    store.run(store.moveToken(tokenId, snapped.x, snapped.y));
-  };
-
-  const onTokenPointerUp = (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId): void => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    dragOrigin.current = null;
-    if (!didDrag.current) {
+      return { width: node.offsetWidth, height: node.offsetHeight };
+    },
+    gridSize: () => snap.tableEncounter?.gridSize ?? null,
+    cellPx: () => veilCellPx(snap.tableEncounter?.gridSize ?? null, snap.tableEncounter?.tokenSize ?? TOKEN_SIZE_DEFAULT),
+    findToken: (tokenId) => tokens.find((item) => item.id === tokenId),
+    findVeil: (veilId) => veils.find((item) => item.id === veilId),
+    getStaging: () => {
+      const staging = snap.tableEncounter?.stagingGround ?? null;
+      return staging === null ? null : { x: staging.x, y: staging.y };
+    },
+    onCommitToken: (tokenId, x, y) => {
+      store.run(store.moveToken(tokenId, x, y));
+    },
+    onCommitVeil: (veilId, x, y) => {
+      store.run(store.moveVeil(veilId, x, y));
+    },
+    onCommitVeilResize: (veilId, x, y, widthCells, heightCells) => {
+      store.run(store.resizeVeil(veilId, x, y, widthCells, heightCells));
+    },
+    onCommitStaging: (x, y, boardWidth, boardHeight) => {
+      store.run(store.moveStagingGround(x, y, boardWidth, boardHeight));
+    },
+    onTokenTap: (tokenId, clientX, clientY) => {
       const now = performance.now();
       const previous = lastTokenTap.current;
       if (
         previous !== null &&
         previous.tokenId === tokenId &&
         now - previous.time <= DOUBLE_TAP_MS &&
-        Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= DOUBLE_TAP_PX
+        Math.hypot(clientX - previous.x, clientY - previous.y) <= DOUBLE_TAP_PX
       ) {
         lastTokenTap.current = null;
         setSelectedTokenId(tokenId);
@@ -442,183 +431,26 @@ export function TableSurface() {
         }
         return;
       }
-      lastTokenTap.current = { tokenId, x: event.clientX, y: event.clientY, time: now };
+      lastTokenTap.current = { tokenId, x: clientX, y: clientY, time: now };
       setSelectedTokenId((current) => (current === tokenId ? null : tokenId));
       setSelectedVeilId(null);
       setSelectedStagingGround(false);
       setInspecting(false);
-    }
-  };
-
-  const onVeilPointerDown = (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId): void => {
-    event.stopPropagation();
-    event.preventDefault();
-    didVeilDrag.current = false;
-    veilDragOrigin.current = { x: event.clientX, y: event.clientY, veilId };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const onVeilPointerMove = (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId): void => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-      return;
-    }
-    const origin = veilDragOrigin.current;
-    if (origin !== null && origin.veilId === veilId) {
-      const dx = event.clientX - origin.x;
-      const dy = event.clientY - origin.y;
-      if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
-        didVeilDrag.current = true;
-      }
-    }
-    if (!didVeilDrag.current) {
-      return;
-    }
-    const node = board.current;
-    if (!node) {
-      store.setError("Battleground board is not mounted");
-      return;
-    }
-    const raw = requireBoardPoint(event.clientX, event.clientY);
-    if (raw === null) {
-      return;
-    }
-    const grid = snap.tableEncounter?.gridSize ?? null;
-    if (grid === null) {
-      store.run(store.moveVeil(veilId, raw.x, raw.y));
-      return;
-    }
-    const veil = veils.find((item) => item.id === veilId);
-    if (!veil) {
-      store.setError(`Encounter has no veil ${veilId}`);
-      return;
-    }
-    const snapped = snapBoxToGrid(
-      raw.x,
-      raw.y,
-      node.offsetWidth,
-      node.offsetHeight,
-      grid,
-      veil.widthCells,
-      veil.heightCells,
-    );
-    store.run(store.moveVeil(veilId, snapped.x, snapped.y));
-  };
-
-  const onVeilPointerUp = (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId): void => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    veilDragOrigin.current = null;
-    if (!didVeilDrag.current) {
+    },
+    onVeilTap: (veilId) => {
       setSelectedVeilId((current) => (current === veilId ? null : veilId));
       setSelectedTokenId(null);
       setSelectedStagingGround(false);
       setInspecting(false);
-    }
-  };
-
-  const onVeilResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>): void => {
-    event.stopPropagation();
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const onVeilResizePointerMove = (
-    event: ReactPointerEvent<HTMLButtonElement>,
-    veilId: VeilId,
-    edge: VeilEdge,
-  ): void => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-      return;
-    }
-    const node = board.current;
-    const raw = requireBoardPoint(event.clientX, event.clientY);
-    if (!node || raw === null) {
-      store.setError("Battleground board is not mounted");
-      return;
-    }
-    const veil = veils.find((item) => item.id === veilId);
-    if (!veil) {
-      store.setError(`Encounter has no veil ${veilId}`);
-      return;
-    }
-    const next = resizeVeilFromEdge(
-      veil,
-      edge,
-      raw,
-      node.offsetWidth,
-      node.offsetHeight,
-      cellPx,
-    );
-    store.run(store.resizeVeil(next.id, next.x, next.y, next.widthCells, next.heightCells));
-  };
-
-  const onVeilResizePointerUp = (event: ReactPointerEvent<HTMLButtonElement>): void => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  };
-
-  const onStagingPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    event.stopPropagation();
-    event.preventDefault();
-    didStagingDrag.current = false;
-    stagingDragOrigin.current = { x: event.clientX, y: event.clientY };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const onStagingPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-      return;
-    }
-    const origin = stagingDragOrigin.current;
-    if (origin !== null) {
-      const dx = event.clientX - origin.x;
-      const dy = event.clientY - origin.y;
-      if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
-        didStagingDrag.current = true;
-      }
-    }
-    if (!didStagingDrag.current) {
-      return;
-    }
-    const node = board.current;
-    if (!node) {
-      store.setError("Battleground board is not mounted");
-      return;
-    }
-    const raw = requireBoardPoint(event.clientX, event.clientY);
-    if (raw === null) {
-      return;
-    }
-    const cellPx = veilCellPx(
-      snap.tableEncounter?.gridSize ?? null,
-      snap.tableEncounter?.tokenSize ?? TOKEN_SIZE_DEFAULT,
-    );
-    const snapped = snapBoxToGrid(
-      raw.x,
-      raw.y,
-      node.offsetWidth,
-      node.offsetHeight,
-      cellPx,
-      STAGING_GROUND_CELLS,
-      STAGING_GROUND_CELLS,
-    );
-    store.run(store.moveStagingGround(snapped.x, snapped.y, node.offsetWidth, node.offsetHeight));
-  };
-
-  const onStagingPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    stagingDragOrigin.current = null;
-    if (!didStagingDrag.current) {
+    },
+    onStagingTap: () => {
       setSelectedStagingGround((current) => !current);
       setSelectedTokenId(null);
       setSelectedVeilId(null);
       setInspecting(false);
-    }
-  };
+    },
+    onError: (message) => store.setError(message),
+  });
 
   const openCardPicker = (at: { x: number; y: number } | null): void => {
     placeCardAt.current = at;
@@ -656,14 +488,13 @@ export function TableSurface() {
   };
 
   const onBoardPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    camera.onPointerMove(event);
     const start = emptyTapStart.current;
     if (start === null || start.pointerId !== event.pointerId) {
       return;
     }
     const dx = event.clientX - start.x;
     const dy = event.clientY - start.y;
-    if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+    if (dx * dx + dy * dy >= EMPTY_TAP_SLOP_PX * EMPTY_TAP_SLOP_PX) {
       emptyTapStart.current = null;
       lastEmptyTap.current = null;
     }
@@ -747,25 +578,21 @@ export function TableSurface() {
           ) : null}
           {boardReady && stagingGround !== null ? (
             <BoardStagingGround
-              staging={stagingGround}
+              staging={applyLiveStaging(stagingGround, gestures.liveDrag)}
               cellPx={cellPx}
               selected={selectedStagingGround}
-              onPointerDown={onStagingPointerDown}
-              onPointerMove={onStagingPointerMove}
-              onPointerUp={onStagingPointerUp}
+              onPointerDown={gestures.onStagingPointerDown}
             />
           ) : null}
           {tokens.filter(isStampToken).map((token) => (
             <BoardToken
               key={token.id}
-              token={token}
+              token={applyLiveToken(token, gestures.liveDrag)}
               unitSize={unitSize}
               selected={token.id === selectedTokenId}
               downed={false}
               artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
-              onPointerDown={onTokenPointerDown}
-              onPointerMove={onTokenPointerMove}
-              onPointerUp={onTokenPointerUp}
+              onPointerDown={gestures.onTokenPointerDown}
             />
           ))}
           {boardReady
@@ -774,21 +601,18 @@ export function TableSurface() {
                 .map((veil) => (
                   <BoardVeil
                     key={veil.id}
-                    veil={veil}
+                    veil={applyLiveVeil(veil, gestures.liveDrag)}
                     cellPx={cellPx}
                     selected={veil.id === selectedVeilId}
-                    onPointerDown={onVeilPointerDown}
-                    onPointerMove={onVeilPointerMove}
-                    onPointerUp={onVeilPointerUp}
-                    onResizePointerDown={onVeilResizePointerDown}
-                    onResizePointerMove={onVeilResizePointerMove}
-                    onResizePointerUp={onVeilResizePointerUp}
+                    onPointerDown={gestures.onVeilPointerDown}
+                    onResizePointerDown={gestures.onVeilResizePointerDown}
                   />
                 ))
             : null}
           {tokens
             .filter((token) => !isStampToken(token) && !coveredCardIds.has(token.id))
             .map((token) => {
+              const display = applyLiveToken(token, gestures.liveDrag);
               const owner =
                 token.entityId === null
                   ? undefined
@@ -797,20 +621,18 @@ export function TableSurface() {
               return (
                 <BoardToken
                   key={token.id}
-                  token={token}
+                  token={display}
                   unitSize={unitSize}
                   selected={token.id === selectedTokenId}
                   downed={hp !== null && hp.currentHp <= 0}
                   artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
-                  onPointerDown={onTokenPointerDown}
-                  onPointerMove={onTokenPointerMove}
-                  onPointerUp={onTokenPointerUp}
+                  onPointerDown={gestures.onTokenPointerDown}
                 />
               );
             })}
           {selected !== null && !coveredCardIds.has(selected.id) ? (
             <TokenFloatControls
-              token={selected}
+              token={applyLiveToken(selected, gestures.liveDrag)}
               unitSize={unitSize}
               hp={selectedHp}
               canInspect={
@@ -861,21 +683,17 @@ export function TableSurface() {
                 .map((veil) => (
                   <BoardVeil
                     key={veil.id}
-                    veil={veil}
+                    veil={applyLiveVeil(veil, gestures.liveDrag)}
                     cellPx={cellPx}
                     selected={veil.id === selectedVeilId}
-                    onPointerDown={onVeilPointerDown}
-                    onPointerMove={onVeilPointerMove}
-                    onPointerUp={onVeilPointerUp}
-                    onResizePointerDown={onVeilResizePointerDown}
-                    onResizePointerMove={onVeilResizePointerMove}
-                    onResizePointerUp={onVeilResizePointerUp}
+                    onPointerDown={gestures.onVeilPointerDown}
+                    onResizePointerDown={gestures.onVeilResizePointerDown}
                   />
                 ))
             : null}
           {selectedVeil !== null ? (
             <VeilFloatControls
-              veil={selectedVeil}
+              veil={applyLiveVeil(selectedVeil, gestures.liveDrag)}
               cellPx={cellPx}
               onRemove={() => {
                 store.run(store.removeVeil(selectedVeil.id));
@@ -885,8 +703,8 @@ export function TableSurface() {
           ) : null}
           {activeInitiativeToken !== null ? (
             <InitiativeTurnMarker
-              tokenX={activeInitiativeToken.x}
-              tokenY={activeInitiativeToken.y}
+              tokenX={applyLiveToken(activeInitiativeToken, gestures.liveDrag).x}
+              tokenY={applyLiveToken(activeInitiativeToken, gestures.liveDrag).y}
               unitSize={unitSize}
               tokenScale={activeInitiativeToken.scale}
             />
@@ -896,11 +714,12 @@ export function TableSurface() {
             if (token === undefined) {
               return null;
             }
+            const display = applyLiveToken(token, gestures.liveDrag);
             return (
               <CombatTokenGlow
                 key={glow.id}
-                tokenX={token.x}
-                tokenY={token.y}
+                tokenX={display.x}
+                tokenY={display.y}
                 unitSize={unitSize}
                 tokenScale={token.scale}
                 kind={glow.kind}
@@ -1024,121 +843,99 @@ export function TableSurface() {
           <CardAddIcon />
         </button>
       </div>
-      {pickingCard
-        ? createPortal(
-            <BattlegroundCardPicker
-              onClose={closeCardPicker}
-              onPick={(entityId) => {
-                const viewportNode = viewport.current;
-                const boardNode = board.current;
-                const at =
-                  placeCardAt.current ??
-                  pointBesideControl(
-                    addCardButton.current,
-                    viewportNode,
-                    boardNode,
-                    camera.view,
-                    boardOriginRef.current,
-                    unitSize,
-                  );
-                store.run(store.placeCardOnBattleground(entityId, at));
-                closeCardPicker();
-              }}
-            />,
-            document.body,
-          )
-        : null}
-      {inspectEntity !== null && selected !== null
-        ? createPortal(
-            <div
-              className="battlefield-card-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-label={inspectEntity.runCard.title}
-              onClick={() => setInspecting(false)}
-            >
-              <div
-                className="battlefield-card-modal-card"
-                onClick={(event) => event.stopPropagation()}
-                onPointerDown={(event) => event.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  className="battlefield-card-modal-close"
-                  aria-label="Close card"
-                  onClick={() => setInspecting(false)}
-                >
-                  ×
-                </button>
-                <EntityCard
-                  entity={inspectEntity}
-                  revealSecrets
-                  expanded
-                  onToggleExpand={() => undefined}
-                  inspectTokenId={selected.id}
-                />
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+      {pickingCard ? (
+        <BattlegroundCardPicker
+          onClose={closeCardPicker}
+          onPick={(entityId) => {
+            const viewportNode = viewport.current;
+            const boardNode = board.current;
+            const at =
+              placeCardAt.current ??
+              pointBesideControl(
+                addCardButton.current,
+                viewportNode,
+                boardNode,
+                camera.view,
+                boardOriginRef.current,
+                unitSize,
+              );
+            store.run(store.placeCardOnBattleground(entityId, at));
+            closeCardPicker();
+          }}
+        />
+      ) : null}
+      {inspectEntity !== null && selected !== null ? (
+        <Modal
+          title={inspectEntity.runCard.title}
+          onClose={() => setInspecting(false)}
+          className="battlefield-card-modal"
+          cardClassName="battlefield-card-modal-card"
+        >
+          <button
+            type="button"
+            className="battlefield-card-modal-close"
+            aria-label="Close card"
+            onClick={() => setInspecting(false)}
+          >
+            ×
+          </button>
+          <EntityCard
+            entity={inspectEntity}
+            revealSecrets
+            expanded
+            onToggleExpand={() => undefined}
+            inspectTokenId={selected.id}
+          />
+        </Modal>
+      ) : null}
       {stageSetFlash
         ? createPortal(
             <div className="stage-set-toast" aria-live="polite" aria-atomic="true">
               <p>Stage set</p>
             </div>,
-            document.body,
+            getModalRoot(),
           )
         : null}
-      {setStageConfirmOpen
-        ? createPortal(
-            <BoardConfirmModal
-              titleId="set-stage-title"
-              title="Set stage?"
-              body={
-                snap.tableEncounter?.stage === null
-                  ? "Save the current board layout as the stage. Reset will restore this layout later."
-                  : "Replace the saved stage with the current board layout. Reset will restore this layout later."
-              }
-              confirmLabel="Set stage"
-              confirmClassName="board-set-stage-confirm"
-              onCancel={() => setSetStageConfirmOpen(false)}
-              onConfirm={() => {
-                setSetStageConfirmOpen(false);
-                onSetStage();
-              }}
-            />,
-            document.body,
-          )
-        : null}
-      {restoreNpcHpConfirmOpen
-        ? createPortal(
-            <BoardConfirmModal
-              titleId="restore-npc-hp-title"
-              title="Restore NPC hit points?"
-              body="Set every NPC on this encounter back to full hit points. Player hit points are not changed."
-              confirmLabel="Restore hit points"
-              confirmClassName="board-restore-npc-hp-confirm"
-              onCancel={() => setRestoreNpcHpConfirmOpen(false)}
-              onConfirm={onConfirmRestoreNpcHp}
-            />,
-            document.body,
-          )
-        : null}
-      {resetConfirmOpen
-        ? createPortal(
-            <BoardConfirmModal
-              titleId="reset-board-title"
-              title="Reset board?"
-              body="Restore the saved stage, turn initiative off, and reset NPC hit points."
-              confirmLabel="Reset"
-              confirmClassName="board-reset-confirm"
-              onCancel={() => setResetConfirmOpen(false)}
-              onConfirm={onConfirmReset}
-            />,
-            document.body,
-          )
-        : null}
+      {setStageConfirmOpen ? (
+        <BoardConfirmModal
+          titleId="set-stage-title"
+          title="Set stage?"
+          body={
+            snap.tableEncounter?.stage === null
+              ? "Save the current board layout as the stage. Reset will restore this layout later."
+              : "Replace the saved stage with the current board layout. Reset will restore this layout later."
+          }
+          confirmLabel="Set stage"
+          confirmClassName="board-set-stage-confirm"
+          onCancel={() => setSetStageConfirmOpen(false)}
+          onConfirm={() => {
+            setSetStageConfirmOpen(false);
+            onSetStage();
+          }}
+        />
+      ) : null}
+      {restoreNpcHpConfirmOpen ? (
+        <BoardConfirmModal
+          titleId="restore-npc-hp-title"
+          title="Restore NPC hit points?"
+          body="Set every NPC on this encounter back to full hit points. Player hit points are not changed."
+          confirmLabel="Restore hit points"
+          confirmClassName="board-restore-npc-hp-confirm"
+          onCancel={() => setRestoreNpcHpConfirmOpen(false)}
+          onConfirm={onConfirmRestoreNpcHp}
+        />
+      ) : null}
+      {resetConfirmOpen ? (
+        <BoardConfirmModal
+          titleId="reset-board-title"
+          title="Reset board?"
+          body="Restore the saved stage, turn initiative off, and reset NPC hit points."
+          confirmLabel="Reset"
+          confirmClassName="board-reset-confirm"
+          onCancel={() => setResetConfirmOpen(false)}
+          onConfirm={onConfirmReset}
+        />
+      ) : null}
       {dice.overlays}
     </div>
   );
@@ -1192,31 +989,19 @@ function BoardConfirmModal({
   onConfirm: () => void;
 }) {
   return (
-    <div
-      className="busy-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      onClick={onCancel}
-    >
-      <div
-        className="busy-modal-card"
-        onClick={(event) => event.stopPropagation()}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <p className="eyebrow">Encounter</p>
-        <h2 id={titleId}>{title}</h2>
-        <p>{body}</p>
-        <div className="card-actions">
-          <button type="button" onClick={onCancel}>
-            Cancel
-          </button>
-          <button type="button" className={confirmClassName} onClick={onConfirm}>
-            {confirmLabel}
-          </button>
-        </div>
+    <Modal titleId={titleId} onClose={onCancel} className="busy-modal" cardClassName="busy-modal-card">
+      <p className="eyebrow">Encounter</p>
+      <h2 id={titleId}>{title}</h2>
+      <p>{body}</p>
+      <div className="card-actions">
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="button" className={confirmClassName} onClick={onConfirm}>
+          {confirmLabel}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1252,8 +1037,6 @@ function BoardToken({
   downed,
   artUrl,
   onPointerDown,
-  onPointerMove,
-  onPointerUp,
 }: {
   token: BattlegroundToken;
   unitSize: number;
@@ -1261,8 +1044,6 @@ function BoardToken({
   downed: boolean;
   artUrl: string | null;
   onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId) => void;
-  onPointerMove: (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId) => void;
-  onPointerUp: (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId) => void;
 }) {
   const sizePx = unitSize * token.scale;
   const stamp = isStampToken(token);
@@ -1287,9 +1068,6 @@ function BoardToken({
       className={tokenClass}
       style={tokenStyle}
       onPointerDown={(event) => onPointerDown(event, token.id)}
-      onPointerMove={(event) => onPointerMove(event, token.id)}
-      onPointerUp={(event) => onTokenPointerUpSafe(event, token.id, onPointerUp)}
-      onPointerCancel={(event) => onTokenPointerUpSafe(event, token.id, onPointerUp)}
     >
       {shapeClass && token.color ? (
         <span className={shapeClass} style={{ background: token.color }} />
@@ -1302,14 +1080,6 @@ function BoardToken({
       {token.label.length > 0 ? <span className="token-name">{token.label}</span> : null}
     </button>
   );
-}
-
-function onTokenPointerUpSafe(
-  event: ReactPointerEvent<HTMLButtonElement>,
-  tokenId: TokenId,
-  onPointerUp: (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId) => void,
-): void {
-  onPointerUp(event, tokenId);
 }
 
 function TokenHpMeter({
@@ -1469,15 +1239,11 @@ function BoardStagingGround({
   cellPx,
   selected,
   onPointerDown,
-  onPointerMove,
-  onPointerUp,
 }: {
   staging: StagingGround;
   cellPx: number;
   selected: boolean;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   const stagingStyle: CSSProperties = {
     left: `${String(staging.x * 100)}%`,
@@ -1492,9 +1258,6 @@ function BoardStagingGround({
       role="img"
       aria-label="Player staging ground"
       onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
     />
   );
 }
@@ -1504,21 +1267,17 @@ function BoardVeil({
   cellPx,
   selected,
   onPointerDown,
-  onPointerMove,
-  onPointerUp,
   onResizePointerDown,
-  onResizePointerMove,
-  onResizePointerUp,
 }: {
   veil: BattlegroundVeil;
   cellPx: number;
   selected: boolean;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId) => void;
-  onPointerMove: (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId) => void;
-  onPointerUp: (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId) => void;
-  onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
-  onResizePointerMove: (event: ReactPointerEvent<HTMLButtonElement>, veilId: VeilId, edge: VeilEdge) => void;
-  onResizePointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onResizePointerDown: (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    veilId: VeilId,
+    edge: VeilEdge,
+  ) => void;
 }) {
   const veilStyle: CSSProperties = {
     left: `${String(veil.x * 100)}%`,
@@ -1541,9 +1300,6 @@ function BoardVeil({
       role="img"
       aria-label={fog ? "Fog of war" : "Veil"}
       onPointerDown={(event) => onPointerDown(event, veil.id)}
-      onPointerMove={(event) => onPointerMove(event, veil.id)}
-      onPointerUp={(event) => onPointerUp(event, veil.id)}
-      onPointerCancel={(event) => onPointerUp(event, veil.id)}
     >
       {fog ? (
         <span className="veil-fog-clip">
@@ -1558,18 +1314,9 @@ function BoardVeil({
               type="button"
               className={`veil-handle is-${edge}`}
               aria-label={veilResizeLabel(veil.kind, edge)}
-              onPointerDown={onResizePointerDown}
-              onPointerMove={(event) => {
+              onPointerDown={(event) => {
                 event.stopPropagation();
-                onResizePointerMove(event, veil.id, edge);
-              }}
-              onPointerUp={(event) => {
-                event.stopPropagation();
-                onResizePointerUp(event);
-              }}
-              onPointerCancel={(event) => {
-                event.stopPropagation();
-                onResizePointerUp(event);
+                onResizePointerDown(event, veil.id, edge);
               }}
             />
           ))
@@ -1826,34 +1573,37 @@ function BattlegroundCardPicker({
     a.runCard.title.localeCompare(b.runCard.title, undefined, { sensitivity: "base" }),
   );
   return (
-    <div className="busy-modal" role="dialog" aria-modal="true" aria-labelledby="bg-card-picker-title" onClick={onClose}>
-      <div className="busy-modal-card bg-card-picker" onClick={(event) => event.stopPropagation()}>
-        <p className="eyebrow">Battleground</p>
-        <h2 id="bg-card-picker-title">Add a card</h2>
-        <p className="muted">Battlemaps replace the map. Everything else becomes a token.</p>
-        <ul className="bg-card-picker-list">
-          {cards.length === 0 ? (
-            <li className="muted">No cards in this campaign yet.</li>
-          ) : (
-            cards.map((entity) => (
-              <li key={entity.id}>
-                <button type="button" onClick={() => onPick(entity.id)}>
-                  <span>{entity.runCard.title}</span>
-                  <em>
-                    {entity.runCard.category.length > 0 ? entity.runCard.category : "Uncategorized"}
-                  </em>
-                </button>
-              </li>
-            ))
-          )}
-        </ul>
-        <div className="card-actions">
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
+    <Modal
+      titleId="bg-card-picker-title"
+      onClose={onClose}
+      className="busy-modal"
+      cardClassName="busy-modal-card bg-card-picker"
+    >
+      <p className="eyebrow">Battleground</p>
+      <h2 id="bg-card-picker-title">Add a card</h2>
+      <p className="muted">Battlemaps replace the map. Everything else becomes a token.</p>
+      <ul className="bg-card-picker-list">
+        {cards.length === 0 ? (
+          <li className="muted">No cards in this campaign yet.</li>
+        ) : (
+          cards.map((entity) => (
+            <li key={entity.id}>
+              <button type="button" onClick={() => onPick(entity.id)}>
+                <span>{entity.runCard.title}</span>
+                <em>
+                  {entity.runCard.category.length > 0 ? entity.runCard.category : "Uncategorized"}
+                </em>
+              </button>
+            </li>
+          ))
+        )}
+      </ul>
+      <div className="card-actions">
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
 

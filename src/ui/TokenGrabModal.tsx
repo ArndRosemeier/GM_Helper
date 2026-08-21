@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { createPortal } from "react-dom";
 import { cardOriginal } from "../host/cardModel";
 import { useHost } from "../host/HostContext";
 import type { Entity } from "../host/types";
@@ -11,6 +10,7 @@ import {
   tryLoadImageUrl,
 } from "../lib/captureTab";
 import { cropImageToPng, rasterizeCardPoster } from "../lib/cardPoster";
+import { Modal } from "./Modal";
 
 type Point = { x: number; y: number };
 type Crop = { x: number; y: number; width: number; height: number };
@@ -31,7 +31,7 @@ export function TokenGrabModal({
   const frameRef = useRef<HTMLIFrameElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const [surface, setSurface] = useState<GrabSurface | null>(null);
-  const [drag, setDrag] = useState<{ start: Point; current: Point } | null>(null);
+  const dragRef = useRef<{ start: Point; current: Point } | null>(null);
   const [crop, setCrop] = useState<Crop | null>(null);
   const [pageCaptureBlocked, setPageCaptureBlocked] = useState(false);
 
@@ -133,17 +133,18 @@ export function TokenGrabModal({
     event.currentTarget.setPointerCapture(event.pointerId);
     const point = readPoint(event);
     const size = surfaceSize();
-    setDrag({ start: point, current: point });
+    dragRef.current = { start: point, current: point };
     setCrop(rectCrop(point, point, size.width, size.height));
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLElement>): void => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId) || !drag) {
+    const drag = dragRef.current;
+    if (!event.currentTarget.hasPointerCapture(event.pointerId) || drag === null) {
       return;
     }
     const current = readPoint(event);
     const size = surfaceSize();
-    setDrag({ ...drag, current });
+    dragRef.current = { start: drag.start, current };
     setCrop(rectCrop(drag.start, current, size.width, size.height));
   };
 
@@ -151,7 +152,7 @@ export function TokenGrabModal({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    setDrag(null);
+    dragRef.current = null;
   };
 
   const confirm = (): void => {
@@ -198,8 +199,14 @@ export function TokenGrabModal({
           : null
       : null;
 
-  return createPortal(
-    <div className="token-grab" role="dialog" aria-modal="true" aria-labelledby="token-grab-title">
+  return (
+    <Modal
+      titleId="token-grab-title"
+      onClose={onClose}
+      closeOnBackdrop={false}
+      className="token-grab-modal"
+      cardClassName="token-grab"
+    >
       <header className="token-grab-bar">
         <div>
           <p className="eyebrow">Grab image</p>
@@ -277,8 +284,7 @@ export function TokenGrabModal({
             ? "Drag a rectangle on the page. Chrome may ask to share this tab when you use the selection."
             : "Drag a rectangle on the card. That crop is stored as the image."}
       </p>
-    </div>,
-    document.body,
+    </Modal>
   );
 }
 

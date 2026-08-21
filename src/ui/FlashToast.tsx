@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { getModalRoot } from "./modalRoot";
 
 export function useFlashToast(durationMs = 1400): {
   message: string | null;
@@ -38,6 +39,6 @@ export function FlashToast({ message }: { message: string | null }) {
     <div className="stage-set-toast" aria-live="polite" aria-atomic="true">
       <p>{message}</p>
     </div>,
-    document.body,
+    getModalRoot(),
   );
 }

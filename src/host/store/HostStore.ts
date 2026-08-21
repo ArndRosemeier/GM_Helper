@@ -79,7 +79,6 @@ import {
   isEncounterCard,
   isFighterEntity,
   isPlayerCard,
-  repositionPlayersInStagingGround,
   restoreAllNpcHp,
   scrubEntityFromBoard,
   stagingGroundAt,
@@ -97,6 +96,7 @@ import {
   sortInitiativeOrder,
   visibleFighterTokenIds,
 } from "../initiative";
+import { isInitiativeDragging } from "../initiativeDragGate";
 import { snapBoxToGrid, snapPointToGrid, tokenSpanCells } from "../gridSnap";
 import { veilCellPx } from "../veil";
 import { SCHEMA_META_KEY } from "../persist/schema";
@@ -1410,12 +1410,8 @@ export class HostStore {
     const encounter = await this.ensureTargetEncounter();
     const cellPx = veilCellPx(encounter.gridSize, encounter.tokenSize);
     const stagingGround = stagingGroundAt(x, y, boardWidth, boardHeight, cellPx);
-    const withStaging = repositionPlayersInStagingGround(
-      { ...encounter, stagingGround },
-      this.entities,
-      encounter.sessionId,
-    );
-    await this.putEncounter({ ...withStaging, sessionId: encounter.sessionId });
+    // Staging is a spawn marker only — never yank tokens already on the board.
+    await this.putEncounter({ ...encounter, stagingGround, sessionId: encounter.sessionId });
     this.emit();
   }
 
@@ -1429,12 +1425,7 @@ export class HostStore {
     }
     const cellPx = veilCellPx(encounter.gridSize, encounter.tokenSize);
     const stagingGround = stagingGroundAt(x, y, boardWidth, boardHeight, cellPx);
-    const withStaging = repositionPlayersInStagingGround(
-      { ...encounter, stagingGround },
-      this.entities,
-      encounter.sessionId,
-    );
-    await this.putEncounter({ ...withStaging, sessionId: encounter.sessionId });
+    await this.putEncounter({ ...encounter, stagingGround, sessionId: encounter.sessionId });
     this.emit();
   }
 
@@ -1555,14 +1546,8 @@ export class HostStore {
     if (!changed) {
       return;
     }
-    let nextEncounter: EncounterState = { ...encounter, tokens, veils, stagingGround };
-    if (stagingGround !== null) {
-      nextEncounter = {
-        ...repositionPlayersInStagingGround(nextEncounter, this.entities, encounter.sessionId),
-        sessionId: encounter.sessionId,
-      };
-    }
-    await this.putEncounter(nextEncounter);
+    // Snap grid/staging geometry only — never reposition players already on the map.
+    await this.putEncounter({ ...encounter, tokens, veils, stagingGround });
     this.emit();
   }
 
@@ -1877,6 +1862,9 @@ export class HostStore {
   }
 
   async syncInitiativeRolls(coveredTokenIds: ReadonlyArray<TokenId>): Promise<void> {
+    if (isInitiativeDragging()) {
+      return;
+    }
     const existing = this.requireTargetEncounter();
     if (!existing.initiativeEnabled) {
       return;
@@ -1916,6 +1904,22 @@ export class HostStore {
       activeIndex: adjustActiveIndexForOrder(order, existing.initiativeOrder, existing.activeIndex),
     });
     this.emit();
+  }
+
+  async reorderInitiativeTokens(fromTokenId: TokenId, toTokenId: TokenId): Promise<void> {
+    const existing = this.requireTargetEncounter();
+    if (!existing.initiativeEnabled) {
+      this.setErrorAndThrow("Initiative is not active");
+    }
+    const fromIndex = existing.initiativeOrder.indexOf(fromTokenId);
+    const toIndex = existing.initiativeOrder.indexOf(toTokenId);
+    if (fromIndex < 0) {
+      this.setErrorAndThrow(`Initiative order has no token ${fromTokenId}`);
+    }
+    if (toIndex < 0) {
+      this.setErrorAndThrow(`Initiative order has no token ${toTokenId}`);
+    }
+    await this.reorderInitiative(fromIndex, toIndex);
   }
 
   async nextTurn(): Promise<void> {

@@ -1,3 +1,5 @@
+import { documentZoom } from "./documentZoom";
+
 export async function canCaptureDisplayTab(): Promise<boolean> {
   return typeof navigator.mediaDevices?.getDisplayMedia === "function";
 }
@@ -5,6 +7,10 @@ export async function canCaptureDisplayTab(): Promise<boolean> {
 /**
  * Capture a viewport rectangle from this tab as a PNG.
  * Uses the display-media picker with preferCurrentTab when the browser supports it.
+ *
+ * `region` is in client coordinates (same space as getBoundingClientRect / clientX).
+ * With `html { zoom }`, client space is visual; the capture buffer is sized to the
+ * layout viewport — convert via documentZoom before scaling into the video frame.
  */
 export async function captureViewportRegionPng(region: {
   left: number;
@@ -42,12 +48,19 @@ export async function captureViewportRegionPng(region: {
     await video.play();
     await waitForVideoFrame(video);
 
-    const scaleX = video.videoWidth / window.innerWidth;
-    const scaleY = video.videoHeight / window.innerHeight;
-    const sx = Math.round(region.left * scaleX);
-    const sy = Math.round(region.top * scaleY);
-    const sw = Math.max(1, Math.round(region.width * scaleX));
-    const sh = Math.max(1, Math.round(region.height * scaleY));
+    const zoom = documentZoom();
+    const layoutViewportW = Math.max(1, window.innerWidth / zoom);
+    const layoutViewportH = Math.max(1, window.innerHeight / zoom);
+    const layoutLeft = region.left / zoom;
+    const layoutTop = region.top / zoom;
+    const layoutWidth = region.width / zoom;
+    const layoutHeight = region.height / zoom;
+    const scaleX = video.videoWidth / layoutViewportW;
+    const scaleY = video.videoHeight / layoutViewportH;
+    const sx = Math.round(layoutLeft * scaleX);
+    const sy = Math.round(layoutTop * scaleY);
+    const sw = Math.max(1, Math.round(layoutWidth * scaleX));
+    const sh = Math.max(1, Math.round(layoutHeight * scaleY));
 
     const canvas = document.createElement("canvas");
     canvas.width = sw;

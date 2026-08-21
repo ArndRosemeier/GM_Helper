@@ -454,9 +454,6 @@ h3 {
 }
 
 .image-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
   display: grid;
   place-items: center;
   padding: 0;
@@ -466,14 +463,20 @@ h3 {
 .image-lightbox-scroll {
   width: 100%;
   height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 16px;
+  padding-top: max(16px, env(safe-area-inset-top));
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 16px;
-  padding: 16px;
-  padding-top: max(16px, env(safe-area-inset-top));
   box-sizing: border-box;
 }
 
@@ -1028,7 +1031,39 @@ h3 {
   top: 0;
   left: 0;
   right: 0;
-  z-index: 100;
+  z-index: 11000;
+}
+
+.app-modal {
+  position: fixed;
+  inset: 0;
+}
+
+.app-modal-card {
+  position: relative;
+}
+
+.app-modal-form {
+  display: contents;
+}
+
+.token-grab-modal {
+  padding: 0;
+  background: #0b0907;
+  display: block;
+}
+
+.card-drag-ghost {
+  position: fixed;
+  z-index: 10050;
+  pointer-events: none;
+  transform: translate(-50%, -120%);
+  background: var(--brass);
+  color: #1a1208;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
 }
 
 .banner-error-dismiss {
@@ -1067,9 +1102,6 @@ h3 {
 }
 
 .busy-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -1106,9 +1138,6 @@ h3 {
 }
 
 .battlefield-card-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
   display: flex;
   align-items: safe center;
   justify-content: safe center;
@@ -1148,9 +1177,6 @@ h3 {
 }
 
 .name-card-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 55;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -1353,19 +1379,6 @@ body.is-card-dragging .encounter-roster {
   border-radius: 50%;
   font-size: 18px;
   line-height: 1;
-}
-
-.card-drag-ghost {
-  position: fixed;
-  z-index: 80;
-  pointer-events: none;
-  transform: translate(-50%, -120%);
-  background: var(--brass);
-  color: #1a1208;
-  border-radius: 999px;
-  padding: 8px 14px;
-  font-weight: 600;
-  box-shadow: var(--shadow);
 }
 
 .turn-order {
@@ -2183,12 +2196,17 @@ body.is-card-dragging .encounter-roster {
 }
 
 .token-grab {
-  position: fixed;
-  inset: 0;
-  z-index: 45;
   display: flex;
   flex-direction: column;
   background: #0b0907;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
 }
 
 .token-grab-bar {
@@ -2343,7 +2361,7 @@ body.is-card-dragging .encounter-roster {
 .stage-set-toast {
   position: fixed;
   inset: 0;
-  z-index: 65;
+  z-index: 10500;
   display: grid;
   place-items: center;
   pointer-events: none;
@@ -2621,7 +2639,7 @@ body.is-card-dragging .encounter-roster {
 .dice-result-overlay {
   position: fixed;
   inset: 0;
-  z-index: 65;
+  z-index: 10500;
   display: grid;
   place-items: center;
   gap: 8px;

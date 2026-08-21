@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Modal } from "./Modal";
 
 export function NameCardModal({
   title,
@@ -21,10 +21,15 @@ export function NameCardModal({
     inputRef.current?.focus();
   }, []);
 
-  return createPortal(
-    <div className="name-card-modal" role="dialog" aria-modal="true" aria-labelledby="name-card-title">
+  return (
+    <Modal
+      titleId="name-card-title"
+      onClose={onCancel}
+      className="name-card-modal"
+      cardClassName="name-card-modal-card"
+    >
       <form
-        className="name-card-modal-card"
+        className="app-modal-form"
         onSubmit={(event) => {
           event.preventDefault();
           const trimmed = name.trim();
@@ -55,7 +60,6 @@ export function NameCardModal({
           </button>
         </div>
       </form>
-    </div>,
-    document.body,
+    </Modal>
   );
 }

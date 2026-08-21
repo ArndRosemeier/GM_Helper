@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Modal } from "./Modal";
 
 export function AiTopicModal({
   initialTopic,
@@ -19,10 +19,15 @@ export function AiTopicModal({
     inputRef.current?.select();
   }, []);
 
-  return createPortal(
-    <div className="name-card-modal" role="dialog" aria-modal="true" aria-labelledby="ai-topic-title">
+  return (
+    <Modal
+      titleId="ai-topic-title"
+      onClose={onCancel}
+      className="name-card-modal"
+      cardClassName="name-card-modal-card"
+    >
       <form
-        className="name-card-modal-card"
+        className="app-modal-form"
         onSubmit={(event) => {
           event.preventDefault();
           const trimmed = topic.trim();
@@ -61,7 +66,6 @@ export function AiTopicModal({
           </button>
         </div>
       </form>
-    </div>,
-    document.body,
+    </Modal>
   );
 }

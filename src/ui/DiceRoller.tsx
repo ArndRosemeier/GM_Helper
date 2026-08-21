@@ -8,6 +8,8 @@ import {
 import { createPortal } from "react-dom";
 import type DiceBox from "@3d-dice/dice-box";
 import type { DiceBoxRollDie } from "@3d-dice/dice-box";
+import { Modal } from "./Modal";
+import { getModalRoot } from "./modalRoot";
 
 export type DieSides = 4 | 6 | 8 | 10 | 12 | 20 | 100;
 
@@ -301,35 +303,32 @@ export function useEncounterDice(): {
     ),
     overlays: (
       <>
-        {pickerOpen
-          ? createPortal(
-              <DicePickerModal
-                tray={tray}
-                canRoll={canRoll}
-                boxReady={boxReady}
-                boxError={boxError}
-                title={
-                  rollPurpose === null
-                    ? "Dice"
-                    : rollPurpose.kind === "damage"
-                      ? `Damage — ${rollPurpose.subject}`
-                      : `Heal — ${rollPurpose.subject}`
-                }
-                onClose={closePicker}
-                onAddDie={addDie}
-                onRemoveDie={removeDie}
-                onAddModifier={addModifier}
-                onClearModifier={clearModifier}
-                onClearTray={clearTray}
-                onRoll={startRoll}
-              />,
-              document.body,
-            )
-          : null}
+        {pickerOpen ? (
+          <DicePickerModal
+            tray={tray}
+            canRoll={canRoll}
+            boxReady={boxReady}
+            boxError={boxError}
+            title={
+              rollPurpose === null
+                ? "Dice"
+                : rollPurpose.kind === "damage"
+                  ? `Damage — ${rollPurpose.subject}`
+                  : `Heal — ${rollPurpose.subject}`
+            }
+            onClose={closePicker}
+            onAddDie={addDie}
+            onRemoveDie={removeDie}
+            onAddModifier={addModifier}
+            onClearModifier={clearModifier}
+            onClearTray={clearTray}
+            onRoll={startRoll}
+          />
+        ) : null}
         {roll !== null && roll.settled
           ? createPortal(
               <DiceResultOverlay total={roll.total} onDismiss={dismissRoll} />,
-              document.body,
+              getModalRoot(),
             )
           : null}
       </>
@@ -368,117 +367,110 @@ function DicePickerModal({
   const needsDiceEngine = tray.dice.length > 0;
   const rollBlocked = needsDiceEngine && (!boxReady || boxError !== null);
   return (
-    <div
+    <Modal
+      titleId={titleId}
+      onClose={onClose}
       className="busy-modal dice-roller-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      onClick={onClose}
+      cardClassName="busy-modal-card dice-roller-card"
     >
-      <div
-        className="busy-modal-card dice-roller-card"
-        onClick={(event) => event.stopPropagation()}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <p className="eyebrow">Encounter</p>
-        <h2 id={titleId}>{title}</h2>
+      <p className="eyebrow">Encounter</p>
+      <h2 id={titleId}>{title}</h2>
 
-        <div className="dice-roller-section">
-          <p className="dice-roller-label">Dice</p>
-          <div className="dice-roller-grid">
-            {STANDARD_DICE.map((sides) => (
-              <button
-                key={sides}
-                type="button"
-                className="dice-roller-die-btn"
-                aria-label={`Add ${dieDisplayName(sides)}`}
-                onClick={() => onAddDie(sides)}
-              >
-                <DieGlyph sides={sides} spin />
-                <span className="dice-roller-die-name">{dieDisplayName(sides)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="dice-roller-section">
-          <p className="dice-roller-label">Plus</p>
-          <div className="dice-roller-mods">
-            {MODIFIER_STEPS.map((amount) => (
-              <button
-                key={amount}
-                type="button"
-                className="dice-roller-mod-btn"
-                aria-label={`Add ${String(amount)}`}
-                onClick={() => onAddModifier(amount)}
-              >
-                {amount}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="dice-roller-section">
-          <div className="dice-roller-tray-head">
-            <p className="dice-roller-label">Tray</p>
-            {tray.dice.length > 0 || tray.modifier > 0 ? (
-              <button type="button" className="dice-roller-clear" onClick={onClearTray}>
-                Clear
-              </button>
-            ) : null}
-          </div>
-          <div className="dice-roller-tray" aria-live="polite">
-            {tray.dice.length === 0 && tray.modifier === 0 ? (
-              <p className="dice-roller-tray-empty">Tap dice and numbers to build a roll.</p>
-            ) : (
-              <>
-                {tray.dice.map((die) => (
-                  <button
-                    key={die.id}
-                    type="button"
-                    className="dice-roller-tray-chip"
-                    aria-label={`Remove ${dieDisplayName(die.sides)}`}
-                    onClick={() => onRemoveDie(die.id)}
-                  >
-                    <DieGlyph sides={die.sides} />
-                    <span>{dieDisplayName(die.sides)}</span>
-                  </button>
-                ))}
-                {tray.modifier > 0 ? (
-                  <button
-                    type="button"
-                    className="dice-roller-tray-chip is-mod"
-                    aria-label={`Clear +${String(tray.modifier)}`}
-                    onClick={onClearModifier}
-                  >
-                    +{tray.modifier}
-                  </button>
-                ) : null}
-              </>
-            )}
-          </div>
-        </div>
-
-        {boxError !== null ? <p className="dice-roller-status is-error">{boxError}</p> : null}
-        {boxError === null && needsDiceEngine && !boxReady ? (
-          <p className="dice-roller-status">Loading 3D dice…</p>
-        ) : null}
-
-        <div className="card-actions dice-roller-actions">
-          <button type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="dice-roller-roll"
-            disabled={!canRoll || rollBlocked}
-            onClick={onRoll}
-          >
-            Roll
-          </button>
+      <div className="dice-roller-section">
+        <p className="dice-roller-label">Dice</p>
+        <div className="dice-roller-grid">
+          {STANDARD_DICE.map((sides) => (
+            <button
+              key={sides}
+              type="button"
+              className="dice-roller-die-btn"
+              aria-label={`Add ${dieDisplayName(sides)}`}
+              onClick={() => onAddDie(sides)}
+            >
+              <DieGlyph sides={sides} spin />
+              <span className="dice-roller-die-name">{dieDisplayName(sides)}</span>
+            </button>
+          ))}
         </div>
       </div>
-    </div>
+
+      <div className="dice-roller-section">
+        <p className="dice-roller-label">Plus</p>
+        <div className="dice-roller-mods">
+          {MODIFIER_STEPS.map((amount) => (
+            <button
+              key={amount}
+              type="button"
+              className="dice-roller-mod-btn"
+              aria-label={`Add ${String(amount)}`}
+              onClick={() => onAddModifier(amount)}
+            >
+              {amount}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="dice-roller-section">
+        <div className="dice-roller-tray-head">
+          <p className="dice-roller-label">Tray</p>
+          {tray.dice.length > 0 || tray.modifier > 0 ? (
+            <button type="button" className="dice-roller-clear" onClick={onClearTray}>
+              Clear
+            </button>
+          ) : null}
+        </div>
+        <div className="dice-roller-tray" aria-live="polite">
+          {tray.dice.length === 0 && tray.modifier === 0 ? (
+            <p className="dice-roller-tray-empty">Tap dice and numbers to build a roll.</p>
+          ) : (
+            <>
+              {tray.dice.map((die) => (
+                <button
+                  key={die.id}
+                  type="button"
+                  className="dice-roller-tray-chip"
+                  aria-label={`Remove ${dieDisplayName(die.sides)}`}
+                  onClick={() => onRemoveDie(die.id)}
+                >
+                  <DieGlyph sides={die.sides} />
+                  <span>{dieDisplayName(die.sides)}</span>
+                </button>
+              ))}
+              {tray.modifier > 0 ? (
+                <button
+                  type="button"
+                  className="dice-roller-tray-chip is-mod"
+                  aria-label={`Clear +${String(tray.modifier)}`}
+                  onClick={onClearModifier}
+                >
+                  +{tray.modifier}
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+
+      {boxError !== null ? <p className="dice-roller-status is-error">{boxError}</p> : null}
+      {boxError === null && needsDiceEngine && !boxReady ? (
+        <p className="dice-roller-status">Loading 3D dice…</p>
+      ) : null}
+
+      <div className="card-actions dice-roller-actions">
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="dice-roller-roll"
+          disabled={!canRoll || rollBlocked}
+          onClick={onRoll}
+        >
+          Roll
+        </button>
+      </div>
+    </Modal>
   );
 }
 

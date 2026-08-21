@@ -259,37 +259,6 @@ export function spawnPointInStagingGround(
   };
 }
 
-export function repositionPlayersInStagingGround(
-  board: EncounterBoard,
-  entities: ReadonlyArray<Entity>,
-  sessionId: SessionId,
-): EncounterBoard {
-  if (board.stagingGround === null) {
-    return board;
-  }
-  const players = playerEntitiesForSession(entities, sessionId);
-  const updated = new Map<BattlegroundToken["id"], BattlegroundToken>();
-  let playerIndex = 0;
-  for (const player of players) {
-    const token = board.tokens.find((item) => item.entityId === player.id);
-    if (token === undefined) {
-      continue;
-    }
-    const at = spawnPointInStagingGround(playerIndex, board.stagingGround);
-    playerIndex += 1;
-    if (token.x !== at.x || token.y !== at.y) {
-      updated.set(token.id, { ...token, x: at.x, y: at.y });
-    }
-  }
-  if (updated.size === 0) {
-    return board;
-  }
-  return {
-    ...board,
-    tokens: board.tokens.map((token) => updated.get(token.id) ?? token),
-  };
-}
-
 export function withFilledEncounterCardHp(
   entities: ReadonlyArray<Entity>,
 ): Entity[] {

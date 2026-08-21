@@ -8,6 +8,9 @@ import type { FocusCardProps } from "../host/features/types";
 import type { TokenId, TrackId } from "../host/ids";
 import type { Entity, Source } from "../host/types";
 import { useCardEncounterDrag } from "./useCardEncounterDrag";
+import { Modal } from "./Modal";
+import { getModalRoot } from "./modalRoot";
+import { safeFileStem } from "../lib/safeFileStem";
 import {
   combatStatsFrom,
   factsFrom,
@@ -68,6 +71,9 @@ export function EntityCard({
   const [textDraft, setTextDraft] = useState(text);
   const [editingText, setEditingText] = useState(false);
   const textEditorRef = useRef<HTMLTextAreaElement>(null);
+  const titleDirty = useRef(false);
+  const textDirty = useRef(false);
+  const combatDirty = useRef(false);
   const [maxHpDraft, setMaxHpDraft] = useState(combat === null ? "" : String(combat.maxHp));
   const [currentHpDraft, setCurrentHpDraft] = useState(
     displayedCurrentHp === null ? "" : String(displayedCurrentHp),
@@ -96,16 +102,36 @@ export function EntityCard({
   }, [snap.openedEntityId, entity.id, controlled]);
 
   useEffect(() => {
+    titleDirty.current = false;
+    textDirty.current = false;
+    combatDirty.current = false;
+    setTitleDraft(entity.runCard.title);
+    setTextDraft(text);
+    setEditingText(false);
+    if (!hasCombatStats || combatMaxHp === undefined || combatInitiative === undefined) {
+      setMaxHpDraft("");
+      setCurrentHpDraft("");
+      setInitiativeDraft("");
+      return;
+    }
+    setMaxHpDraft(String(combatMaxHp));
+    setCurrentHpDraft(displayedCurrentHp === null ? "" : String(displayedCurrentHp));
+    setInitiativeDraft(String(combatInitiative));
+  }, [entity.id]);
+
+  useEffect(() => {
+    if (titleDirty.current) {
+      return;
+    }
     setTitleDraft(entity.runCard.title);
   }, [entity.runCard.title]);
 
   useEffect(() => {
+    if (textDirty.current || editingText) {
+      return;
+    }
     setTextDraft(text);
-  }, [text]);
-
-  useEffect(() => {
-    setEditingText(false);
-  }, [entity.id]);
+  }, [text, editingText]);
 
   useEffect(() => {
     if (!editingText) {
@@ -115,6 +141,9 @@ export function EntityCard({
   }, [editingText]);
 
   useEffect(() => {
+    if (combatDirty.current) {
+      return;
+    }
     if (!hasCombatStats || combatMaxHp === undefined || combatInitiative === undefined) {
       setMaxHpDraft("");
       setCurrentHpDraft("");
@@ -146,8 +175,10 @@ export function EntityCard({
       setMaxHpDraft(String(combat.maxHp));
       setCurrentHpDraft(displayedCurrentHp === null ? "" : String(displayedCurrentHp));
       setInitiativeDraft(String(combat.initiativeBonus));
+      combatDirty.current = false;
       return;
     }
+    combatDirty.current = false;
     store.run(store.setEntityCombatStats(entity.id, maxHp, currentHp, initiativeBonus));
   };
 
@@ -158,8 +189,10 @@ export function EntityCard({
     const currentHp = parseIntegerField(currentHpDraft);
     if (currentHp === null) {
       setCurrentHpDraft(String(inspectHp.currentHp));
+      combatDirty.current = false;
       return;
     }
+    combatDirty.current = false;
     store.run(store.setTokenCurrentHp(inspectTokenId, currentHp));
   };
 
@@ -288,12 +321,16 @@ export function EntityCard({
             className="inline-form"
             onSubmit={(event) => {
               event.preventDefault();
+              titleDirty.current = false;
               store.run(store.renameEntity(entity.id, titleDraft));
             }}
           >
             <input
               value={titleDraft}
-              onChange={(event) => setTitleDraft(event.target.value)}
+              onChange={(event) => {
+                titleDirty.current = true;
+                setTitleDraft(event.target.value);
+              }}
               aria-label="Card title"
             />
             <button type="submit">Rename</button>
@@ -344,7 +381,7 @@ export function EntityCard({
                 store.run(
                   saveBlobAsFile(
                     () => store.exportCardArchive(entity.id),
-                    `${safeCardFileStem(entity.runCard.title)}.zip`,
+                    `${safeFileStem(entity.runCard.title, "card")}-card.zip`,
                     {
                       description: "GM Helper card",
                       accept: { "application/zip": [".zip"] },
@@ -371,6 +408,7 @@ export function EntityCard({
                   aria-label={`Max HP for ${entity.runCard.title}`}
                   onChange={(event) => {
                     if (isIntegerDraft(event.target.value)) {
+                      combatDirty.current = true;
                       setMaxHpDraft(event.target.value);
                     }
                   }}
@@ -388,6 +426,7 @@ export function EntityCard({
                     aria-label={`Current HP for ${entity.runCard.title}`}
                     onChange={(event) => {
                       if (isIntegerDraft(event.target.value)) {
+                        combatDirty.current = true;
                         setCurrentHpDraft(event.target.value);
                       }
                     }}
@@ -405,6 +444,7 @@ export function EntityCard({
                   aria-label={`Initiative bonus for ${entity.runCard.title}`}
                   onChange={(event) => {
                     if (isIntegerDraft(event.target.value)) {
+                      combatDirty.current = true;
                       setInitiativeDraft(event.target.value);
                     }
                   }}
@@ -420,8 +460,12 @@ export function EntityCard({
                   ref={textEditorRef}
                   className="card-text-editor"
                   value={textDraft}
-                  onChange={(event) => setTextDraft(event.target.value)}
+                  onChange={(event) => {
+                    textDirty.current = true;
+                    setTextDraft(event.target.value);
+                  }}
                   onBlur={() => {
+                    textDirty.current = false;
                     store.run(store.setEntityText(entity.id, textDraft));
                     setEditingText(false);
                   }}
@@ -523,45 +567,39 @@ export function EntityCard({
         </div>
       ) : null}
       {grabbing ? <TokenGrabModal entity={entity} onClose={() => setGrabbing(false)} /> : null}
-      {deletingCard
-        ? createPortal(
-            <div
-              className="busy-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="delete-card-title"
-              onClick={() => setDeletingCard(false)}
+      {deletingCard ? (
+        <Modal
+          titleId="delete-card-title"
+          onClose={() => setDeletingCard(false)}
+          className="busy-modal"
+          cardClassName="busy-modal-card"
+        >
+          <p className="eyebrow">Card</p>
+          <h2 id="delete-card-title">Delete this card?</h2>
+          <p>
+            “{entity.runCard.title}” will be removed permanently. This cannot be undone.
+          </p>
+          <div className="card-actions">
+            <button
+              type="button"
+              onClick={() => {
+                store.run(store.deleteEntity(entity.id).then(() => setDeletingCard(false)));
+              }}
             >
-              <div className="busy-modal-card" onClick={(event) => event.stopPropagation()}>
-                <p className="eyebrow">Card</p>
-                <h2 id="delete-card-title">Delete this card?</h2>
-                <p>
-                  “{entity.runCard.title}” will be removed permanently. This cannot be undone.
-                </p>
-                <div className="card-actions">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      store.run(store.deleteEntity(entity.id).then(() => setDeletingCard(false)));
-                    }}
-                  >
-                    Delete
-                  </button>
-                  <button type="button" onClick={() => setDeletingCard(false)}>
-                    Keep
-                  </button>
-                </div>
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+              Delete
+            </button>
+            <button type="button" onClick={() => setDeletingCard(false)}>
+              Keep
+            </button>
+          </div>
+        </Modal>
+      ) : null}
       {drag.ghost
         ? createPortal(
             <div className="card-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y }}>
               {drag.ghost.title}
             </div>,
-            document.body,
+            getModalRoot(),
           )
         : null}
     </article>
@@ -578,13 +616,4 @@ function cardHasGrabSource(entity: Entity, sources: ReadonlyArray<Source>): bool
   }
   const pdf = sources.find((source) => source.id === original.sourceId);
   return pdf?.bytes instanceof Blob;
-}
-
-function safeCardFileStem(title: string): string {
-  const stem = title
-    .trim()
-    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "")
-    .replace(/\s+/g, "-")
-    .slice(0, 80);
-  return stem.length > 0 ? `${stem}-card` : "card";
 }

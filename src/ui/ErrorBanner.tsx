@@ -1,5 +1,6 @@
 import { createPortal } from "react-dom";
 import { useHost } from "../host/HostContext";
+import { getModalRoot } from "./modalRoot";
 
 export function ErrorBanner() {
   const { store, snap } = useHost();
@@ -27,7 +28,7 @@ export function ErrorBanner() {
             <span className="banner-error-hint">Tap to dismiss</span>
           </button>
         </div>,
-        document.body,
+        getModalRoot(),
       )}
     </>
   );
