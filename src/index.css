@@ -1541,7 +1541,7 @@ body.is-card-dragging .encounter-roster {
 }
 
 .board-token-overlay .token.is-portrait.is-screen-mounted .token-identity-halo {
-  inset: -85%;
+  inset: -42.5%;
   width: auto;
   height: auto;
   transform: none;
@@ -2354,7 +2354,7 @@ body.is-card-dragging .encounter-roster {
 
 .token-identity-halo {
   position: absolute;
-  inset: -85%;
+  inset: -42.5%;
   border-radius: 50%;
   pointer-events: none;
   z-index: 0;
@@ -2364,8 +2364,8 @@ body.is-card-dragging .encounter-roster {
   inset: auto;
   left: 50%;
   top: 50%;
-  width: calc(var(--token-art-size) * var(--board-zoom) * 2.7);
-  height: calc(var(--token-art-size) * var(--board-zoom) * 2.7);
+  width: calc(var(--token-art-size) * var(--board-zoom) * 1.85);
+  height: calc(var(--token-art-size) * var(--board-zoom) * 1.85);
   transform: translate(-50%, -50%) scale(calc(1 / var(--board-zoom)));
   transform-origin: center center;
 }
@@ -2373,10 +2373,10 @@ body.is-card-dragging .encounter-roster {
 .token-identity-halo.is-player {
   background: radial-gradient(
     circle,
-    rgb(20 235 105 / 0.8) 37%,
-    rgb(20 235 105 / 0.55) 58%,
-    rgb(20 235 105 / 0.28) 76%,
-    rgb(20 235 105 / 0.1) 90%,
+    rgb(20 235 105 / 0.6) 54%,
+    rgb(20 235 105 / 0.41) 68%,
+    rgb(20 235 105 / 0.21) 82%,
+    rgb(20 235 105 / 0.08) 92%,
     transparent 100%
   );
 }
@@ -2384,10 +2384,10 @@ body.is-card-dragging .encounter-roster {
 .token-identity-halo.is-npc {
   background: radial-gradient(
     circle,
-    rgb(255 40 45 / 0.8) 37%,
-    rgb(255 40 45 / 0.55) 58%,
-    rgb(255 40 45 / 0.28) 76%,
-    rgb(255 40 45 / 0.1) 90%,
+    rgb(255 40 45 / 0.6) 54%,
+    rgb(255 40 45 / 0.41) 68%,
+    rgb(255 40 45 / 0.21) 82%,
+    rgb(255 40 45 / 0.08) 92%,
     transparent 100%
   );
 }
