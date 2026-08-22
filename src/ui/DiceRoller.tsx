@@ -5,11 +5,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
 import type DiceBox from "@3d-dice/dice-box";
 import type { DiceBoxRollDie } from "@3d-dice/dice-box";
 import { Modal } from "./Modal";
-import { getModalRoot } from "./modalRoot";
 
 export type DieSides = 4 | 6 | 8 | 10 | 12 | 20 | 100;
 
@@ -325,12 +323,9 @@ export function useEncounterDice(): {
             onRoll={startRoll}
           />
         ) : null}
-        {roll !== null && roll.settled
-          ? createPortal(
-              <DiceResultOverlay total={roll.total} onDismiss={dismissRoll} />,
-              getModalRoot(),
-            )
-          : null}
+        {roll !== null && roll.settled ? (
+          <DiceResultOverlay total={roll.total} onDismiss={dismissRoll} />
+        ) : null}
       </>
     ),
   };
@@ -476,17 +471,17 @@ function DicePickerModal({
 
 function DiceResultOverlay({ total, onDismiss }: { total: number; onDismiss: () => void }) {
   return (
-    <div
-      className="dice-result-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Roll result ${String(total)}`}
-      onClick={onDismiss}
-      onPointerDown={(event) => event.stopPropagation()}
+    <Modal
+      title={`Roll result ${String(total)}`}
+      onClose={onDismiss}
+      className="dice-result-modal"
+      cardClassName="dice-result-card"
     >
-      <p className="dice-result-total">{total}</p>
-      <p className="dice-result-hint">Tap to dismiss</p>
-    </div>
+      <button type="button" className="dice-result-body" onClick={onDismiss}>
+        <p className="dice-result-total">{total}</p>
+        <p className="dice-result-hint">Tap to dismiss</p>
+      </button>
+    </Modal>
   );
 }
 

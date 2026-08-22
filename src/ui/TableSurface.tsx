@@ -26,7 +26,7 @@ import {
   type StagingGround,
   type VeilKind,
 } from "../host/types";
-import { combatHpForToken, isNpcCard } from "../host/encounter";
+import { combatHpForToken, isNpcCard, isPlayerCard } from "../host/encounter";
 import { activeInitiativeTokenId } from "../host/initiative";
 import { snapBoxToGrid } from "../host/gridSnap";
 import { useHost } from "../host/HostContext";
@@ -34,12 +34,25 @@ import type { EntityId, TokenId, VeilId } from "../host/ids";
 import { defaultTokenDataUrl, tokenArtUrl } from "../lib/defaultToken";
 import { EntityCard } from "./EntityCard";
 import {
+  BOARD_SCALE_MAX,
+  BOARD_SCALE_MIN,
   boardPointFromViewport,
   clientPointInViewport,
   clientPointOnBoard,
   useBoardPanZoom,
   type BoardView,
 } from "./useBoardPanZoom";
+import {
+  findPortraitTokenAtClientPoint,
+  screenTokenAnchorProps,
+  screenTokenButtonStyle,
+  screenTokenLayout,
+  TOKEN_MIN_SCREEN_PX,
+  tokenArtSizePx,
+  tokenHitSizeBoardPx,
+  tokenScreenDiameterPx,
+  zoomScaleForTokenScreenSize,
+} from "./tokenBoardMetrics";
 import {
   portraitCoveredByVeils,
   veilCellPx,
@@ -60,20 +73,31 @@ import {
   applyLiveVeil,
   useBoardObjectGestures,
 } from "./useBoardObjectGestures";
+import { applyBoardCamera, type BoardLayout } from "./applyBoardCamera";
+import { applyScreenTokenOverlays } from "./applyScreenTokenOverlays";
 
 const DOUBLE_TAP_MS = 500;
 const DOUBLE_TAP_PX = 32;
 const EMPTY_TAP_SLOP_PX = 8;
 /** Extra cells of floor and grid beyond the battlemap, in each direction. */
-const WORLD_PAD_CELLS = 256;
+const WORLD_PAD_CELLS = 48;
 const EMPTY_VEILS: ReadonlyArray<BattlegroundVeil> = [];
 
 export function TableSurface() {
   const { store, snap } = useHost();
   const viewport = useRef<HTMLDivElement>(null);
   const board = useRef<HTMLDivElement>(null);
+  const tokenOverlay = useRef<HTMLDivElement>(null);
   const boardOriginRef = useRef({ x: 0, y: 0 });
-  const camera = useBoardPanZoom(viewport, boardOriginRef);
+  const boardLayoutRef = useRef<BoardLayout>({ left: 0, top: 0, width: 0, height: 0 });
+  const useScreenTokens = useCoarsePointer();
+  const camera = useBoardPanZoom(
+    viewport,
+    boardOriginRef,
+    board,
+    useScreenTokens ? tokenOverlay : null,
+    useScreenTokens ? boardLayoutRef : null,
+  );
   const [selectedTokenId, setSelectedTokenId] = useState<TokenId | null>(null);
   const [selectedVeilId, setSelectedVeilId] = useState<VeilId | null>(null);
   const [selectedStagingGround, setSelectedStagingGround] = useState(false);
@@ -88,7 +112,7 @@ export function TableSurface() {
   const lastEmptyTap = useRef<{ x: number; y: number; time: number } | null>(null);
   const lastTokenTap = useRef<{ tokenId: TokenId; x: number; y: number; time: number } | null>(null);
   const cameraViewRef = useRef(camera.view);
-  cameraViewRef.current = camera.view;
+  cameraViewRef.current = camera.viewRef.current;
   const [mapNatural, setMapNatural] = useState<{
     url: string;
     width: number;
@@ -254,17 +278,28 @@ export function TableSurface() {
   const boardLeft = boardLayout === null ? 0 : boardLayout.left;
   const boardTop = boardLayout === null ? 0 : boardLayout.top;
   boardOriginRef.current = { x: boardLeft, y: boardTop };
-  const boardStyle: CSSProperties & { "--board-zoom": string } = {
+  const boardStyle: CSSProperties = {
     width: boardLayout === null ? undefined : `${String(boardLayout.width)}px`,
     height: boardLayout === null ? undefined : `${String(boardLayout.height)}px`,
     left: `${String(boardLeft)}px`,
     top: `${String(boardTop)}px`,
-    transform: `translate(${String(camera.view.x)}px, ${String(camera.view.y)}px) scale(${String(camera.view.scale)})`,
-    "--board-zoom": String(camera.view.scale),
   };
   const boardWidthPx = boardLayout !== null ? boardLayout.width : (viewportPx === null ? 0 : viewportPx.width);
   const boardHeightPx = boardLayout !== null ? boardLayout.height : (viewportPx === null ? 0 : viewportPx.height);
+  boardLayoutRef.current = {
+    left: boardLeft,
+    top: boardTop,
+    width: boardWidthPx,
+    height: boardHeightPx,
+  };
   const boardReady = boardWidthPx > 0 && boardHeightPx > 0;
+  const screenBoardLayout: BoardLayout = {
+    left: boardLeft,
+    top: boardTop,
+    width: boardWidthPx,
+    height: boardHeightPx,
+  };
+  const portraitMount: "board" | "screen" = useScreenTokens ? "screen" : "board";
   const cellPx = veilCellPx(gridSize, snap.tableEncounter?.tokenSize ?? TOKEN_SIZE_DEFAULT);
   const coveredTokenKey = useMemo(() => {
     if (!boardReady || boardTokens === undefined) {
@@ -286,6 +321,14 @@ export function TableSurface() {
     }
     return new Set(coveredTokenKey.split(",") as TokenId[]);
   }, [coveredTokenKey]);
+  const selectedScreenDiameter =
+    selected !== null
+      ? tokenScreenDiameterPx(tokenArtSizePx(unitSize, selected.scale), camera.view.scale)
+      : 0;
+  const showTokenControls =
+    selected !== null &&
+    !coveredCardIds.has(selected.id) &&
+    selectedScreenDiameter >= TOKEN_MIN_SCREEN_PX;
   const initiativeSyncKey = useMemo(() => {
     if (boardTokens === undefined) {
       return coveredTokenKey;
@@ -317,6 +360,13 @@ export function TableSurface() {
     }
     store.run(store.syncInitiativeRolls([...coveredCardIds]));
   }, [store, boardReady, initiativeEnabled, initiativeSyncKey, coveredCardIds, initiativeDragEpochValue]);
+
+  useLayoutEffect(() => {
+    applyBoardCamera(board.current, viewport.current, camera.viewRef.current, boardOriginRef.current);
+    if (useScreenTokens) {
+      applyScreenTokenOverlays(tokenOverlay.current, camera.viewRef.current, boardLayoutRef.current);
+    }
+  }, [boardLeft, boardTop, camera.view, boardLayout?.width, boardLayout?.height, useScreenTokens]);
 
   useLayoutEffect(() => {
     const node = viewport.current;
@@ -379,6 +429,47 @@ export function TableSurface() {
     );
   };
 
+  const handleTokenTap = (tokenId: TokenId, clientX: number, clientY: number): void => {
+    const token = tokens.find((item) => item.id === tokenId);
+    if (token === undefined) {
+      return;
+    }
+    const artPx = tokenArtSizePx(unitSize, token.scale);
+    const view = cameraViewRef.current;
+    if (tokenScreenDiameterPx(artPx, view.scale) < TOKEN_MIN_SCREEN_PX) {
+      const targetScale = Math.min(
+        BOARD_SCALE_MAX,
+        Math.max(BOARD_SCALE_MIN, zoomScaleForTokenScreenSize(artPx)),
+      );
+      camera.focusOnBoardPoint({ x: token.x, y: token.y }, targetScale);
+    }
+
+    const now = performance.now();
+    const previous = lastTokenTap.current;
+    if (
+      previous !== null &&
+      previous.tokenId === tokenId &&
+      now - previous.time <= DOUBLE_TAP_MS &&
+      Math.hypot(clientX - previous.x, clientY - previous.y) <= DOUBLE_TAP_PX
+    ) {
+      lastTokenTap.current = null;
+      setSelectedTokenId(tokenId);
+      setSelectedVeilId(null);
+      setSelectedStagingGround(false);
+      const canInspect =
+        token.entityId !== null && snap.entities.some((item) => item.id === token.entityId);
+      if (canInspect) {
+        setInspecting(true);
+      }
+      return;
+    }
+    lastTokenTap.current = { tokenId, x: clientX, y: clientY, time: now };
+    setSelectedTokenId((current) => (current === tokenId ? null : tokenId));
+    setSelectedVeilId(null);
+    setSelectedStagingGround(false);
+    setInspecting(false);
+  };
+
   const gestures = useBoardObjectGestures({
     requireBoardPoint,
     boardSize: () => {
@@ -397,46 +488,26 @@ export function TableSurface() {
       return staging === null ? null : { x: staging.x, y: staging.y };
     },
     onCommitToken: (tokenId, x, y) => {
-      store.run(store.moveToken(tokenId, x, y));
+      const work = store.moveToken(tokenId, x, y);
+      store.run(work);
+      return work;
     },
     onCommitVeil: (veilId, x, y) => {
-      store.run(store.moveVeil(veilId, x, y));
+      const work = store.moveVeil(veilId, x, y);
+      store.run(work);
+      return work;
     },
     onCommitVeilResize: (veilId, x, y, widthCells, heightCells) => {
-      store.run(store.resizeVeil(veilId, x, y, widthCells, heightCells));
+      const work = store.resizeVeil(veilId, x, y, widthCells, heightCells);
+      store.run(work);
+      return work;
     },
     onCommitStaging: (x, y, boardWidth, boardHeight) => {
-      store.run(store.moveStagingGround(x, y, boardWidth, boardHeight));
+      const work = store.moveStagingGround(x, y, boardWidth, boardHeight);
+      store.run(work);
+      return work;
     },
-    onTokenTap: (tokenId, clientX, clientY) => {
-      const now = performance.now();
-      const previous = lastTokenTap.current;
-      if (
-        previous !== null &&
-        previous.tokenId === tokenId &&
-        now - previous.time <= DOUBLE_TAP_MS &&
-        Math.hypot(clientX - previous.x, clientY - previous.y) <= DOUBLE_TAP_PX
-      ) {
-        lastTokenTap.current = null;
-        setSelectedTokenId(tokenId);
-        setSelectedVeilId(null);
-        setSelectedStagingGround(false);
-        const token = tokens.find((item) => item.id === tokenId);
-        const canInspect =
-          token !== undefined &&
-          token.entityId !== null &&
-          snap.entities.some((item) => item.id === token.entityId);
-        if (canInspect) {
-          setInspecting(true);
-        }
-        return;
-      }
-      lastTokenTap.current = { tokenId, x: clientX, y: clientY, time: now };
-      setSelectedTokenId((current) => (current === tokenId ? null : tokenId));
-      setSelectedVeilId(null);
-      setSelectedStagingGround(false);
-      setInspecting(false);
-    },
+    onTokenTap: handleTokenTap,
     onVeilTap: (veilId) => {
       setSelectedVeilId((current) => (current === veilId ? null : veilId));
       setSelectedTokenId(null);
@@ -510,6 +581,25 @@ export function TableSurface() {
     if (start === null || start.pointerId !== event.pointerId || !snap.session) {
       return;
     }
+    const viewportNode = viewport.current;
+    const boardNode = board.current;
+    if (viewportNode && boardNode) {
+      const hitToken = findPortraitTokenAtClientPoint({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        tokens,
+        unitSize,
+        view: cameraViewRef.current,
+        viewport: viewportNode,
+        board: boardNode,
+        layoutOrigin: boardOriginRef.current,
+        isStamp: isStampToken,
+      });
+      if (hitToken !== null) {
+        handleTokenTap(hitToken.id, event.clientX, event.clientY);
+        return;
+      }
+    }
     const now = performance.now();
     const previous = lastEmptyTap.current;
     if (
@@ -533,10 +623,6 @@ export function TableSurface() {
       <div
         ref={viewport}
         className="board-viewport"
-        style={{
-          backgroundSize: `${String(256 * camera.view.scale)}px ${String(256 * camera.view.scale)}px`,
-          backgroundPosition: `${String(camera.view.x + boardLeft)}px ${String(camera.view.y + boardTop)}px`,
-        }}
         onPointerDown={onBoardPointerDown}
         onPointerMove={onBoardPointerMove}
         onPointerUp={onBoardPointerUp}
@@ -589,9 +675,13 @@ export function TableSurface() {
               key={token.id}
               token={applyLiveToken(token, gestures.liveDrag)}
               unitSize={unitSize}
+              mount="board"
+              view={camera.view}
+              boardLayout={screenBoardLayout}
               selected={token.id === selectedTokenId}
               downed={false}
               artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
+              identity={null}
               onPointerDown={gestures.onTokenPointerDown}
             />
           ))}
@@ -609,31 +699,48 @@ export function TableSurface() {
                   />
                 ))
             : null}
-          {tokens
-            .filter((token) => !isStampToken(token) && !coveredCardIds.has(token.id))
-            .map((token) => {
-              const display = applyLiveToken(token, gestures.liveDrag);
-              const owner =
-                token.entityId === null
-                  ? undefined
-                  : snap.entities.find((item) => item.id === token.entityId);
-              const hp = combatHpForToken(token, owner);
-              return (
-                <BoardToken
-                  key={token.id}
-                  token={display}
-                  unitSize={unitSize}
-                  selected={token.id === selectedTokenId}
-                  downed={hp !== null && hp.currentHp <= 0}
-                  artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
-                  onPointerDown={gestures.onTokenPointerDown}
-                />
-              );
-            })}
-          {selected !== null && !coveredCardIds.has(selected.id) ? (
+          {portraitMount === "board"
+            ? tokens
+                .filter((token) => !isStampToken(token) && !coveredCardIds.has(token.id))
+                .map((token) => {
+                  const display = applyLiveToken(token, gestures.liveDrag);
+                  const owner =
+                    token.entityId === null
+                      ? undefined
+                      : snap.entities.find((item) => item.id === token.entityId);
+                  const hp = combatHpForToken(token, owner);
+                  const identity =
+                    owner === undefined
+                      ? null
+                      : isPlayerCard(owner)
+                        ? "player"
+                        : isNpcCard(owner)
+                          ? "npc"
+                          : null;
+                  return (
+                    <BoardToken
+                      key={token.id}
+                      token={display}
+                      unitSize={unitSize}
+                      mount="board"
+                      view={camera.view}
+                      boardLayout={screenBoardLayout}
+                      selected={token.id === selectedTokenId}
+                      downed={hp !== null && hp.currentHp <= 0}
+                      artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
+                      identity={identity}
+                      onPointerDown={gestures.onTokenPointerDown}
+                    />
+                  );
+                })
+            : null}
+          {portraitMount === "board" && showTokenControls ? (
             <TokenFloatControls
               token={applyLiveToken(selected, gestures.liveDrag)}
               unitSize={unitSize}
+              mount="board"
+              view={camera.view}
+              boardLayout={screenBoardLayout}
               hp={selectedHp}
               canInspect={
                 selected.entityId !== null &&
@@ -701,7 +808,7 @@ export function TableSurface() {
               }}
             />
           ) : null}
-          {activeInitiativeToken !== null ? (
+          {portraitMount === "board" && activeInitiativeToken !== null ? (
             <InitiativeTurnMarker
               tokenX={applyLiveToken(activeInitiativeToken, gestures.liveDrag).x}
               tokenY={applyLiveToken(activeInitiativeToken, gestures.liveDrag).y}
@@ -709,27 +816,148 @@ export function TableSurface() {
               tokenScale={activeInitiativeToken.scale}
             />
           ) : null}
-          {combatGlows.map((glow) => {
-            const token = snap.tableEncounter?.tokens.find((item) => item.id === glow.tokenId);
-            if (token === undefined) {
-              return null;
-            }
-            const display = applyLiveToken(token, gestures.liveDrag);
-            return (
-              <CombatTokenGlow
-                key={glow.id}
-                tokenX={display.x}
-                tokenY={display.y}
-                unitSize={unitSize}
-                tokenScale={token.scale}
-                kind={glow.kind}
-              />
-            );
-          })}
+          {portraitMount === "board"
+            ? combatGlows.map((glow) => {
+                const token = snap.tableEncounter?.tokens.find((item) => item.id === glow.tokenId);
+                if (token === undefined) {
+                  return null;
+                }
+                const display = applyLiveToken(token, gestures.liveDrag);
+                return (
+                  <CombatTokenGlow
+                    key={glow.id}
+                    tokenX={display.x}
+                    tokenY={display.y}
+                    unitSize={unitSize}
+                    tokenScale={token.scale}
+                    kind={glow.kind}
+                    mount="board"
+                  />
+                );
+              })
+            : null}
           {tokens.length === 0 && !mapUrl ? (
             <p className="board-empty">No public map yet. Pick the pad up, or tap Lift.</p>
           ) : null}
         </div>
+        {portraitMount === "screen" ? (
+          <div ref={tokenOverlay} className="board-token-overlay">
+            {tokens
+              .filter((token) => !isStampToken(token) && !coveredCardIds.has(token.id))
+              .map((token) => {
+                const display = applyLiveToken(token, gestures.liveDrag);
+                const owner =
+                  token.entityId === null
+                    ? undefined
+                    : snap.entities.find((item) => item.id === token.entityId);
+                const hp = combatHpForToken(token, owner);
+                const identity =
+                  owner === undefined
+                    ? null
+                    : isPlayerCard(owner)
+                      ? "player"
+                      : isNpcCard(owner)
+                        ? "npc"
+                        : null;
+                return (
+                  <BoardToken
+                    key={token.id}
+                    token={display}
+                    unitSize={unitSize}
+                    mount="screen"
+                    view={camera.view}
+                    boardLayout={screenBoardLayout}
+                    selected={token.id === selectedTokenId}
+                    downed={hp !== null && hp.currentHp <= 0}
+                    artUrl={tokenArtFor(token, snap.entities, snap.mediaUrls)}
+                    identity={identity}
+                    onPointerDown={gestures.onTokenPointerDown}
+                  />
+                );
+              })}
+            {showTokenControls ? (
+              <TokenFloatControls
+                token={applyLiveToken(selected, gestures.liveDrag)}
+                unitSize={unitSize}
+                mount="screen"
+                view={camera.view}
+                boardLayout={screenBoardLayout}
+                hp={selectedHp}
+                canInspect={
+                  selected.entityId !== null &&
+                  snap.entities.some((item) => item.id === selected.entityId)
+                }
+                onDamage={
+                  selectedHp === null
+                    ? undefined
+                    : () => {
+                        dice.openCombatRoll({
+                          kind: "damage",
+                          subject: selected.label,
+                          onResult: (total) => {
+                            triggerCombatGlow(selected.id, "damage");
+                            store.run(store.adjustTokenCurrentHp(selected.id, -total));
+                          },
+                        });
+                      }
+                }
+                onHeal={
+                  selectedHp === null
+                    ? undefined
+                    : () => {
+                        dice.openCombatRoll({
+                          kind: "heal",
+                          subject: selected.label,
+                          onResult: (total) => {
+                            triggerCombatGlow(selected.id, "heal");
+                            store.run(store.adjustTokenCurrentHp(selected.id, total));
+                          },
+                        });
+                      }
+                }
+                onGrow={() => store.run(store.adjustTokenScale(selected.id, 1))}
+                onShrink={() => store.run(store.adjustTokenScale(selected.id, -1))}
+                onInspect={() => setInspecting(true)}
+                onRemove={() => {
+                  store.run(store.removeToken(selected.id));
+                  setSelectedTokenId(null);
+                  setInspecting(false);
+                }}
+              />
+            ) : null}
+            {activeInitiativeToken !== null ? (
+              <InitiativeTurnMarker
+                tokenX={applyLiveToken(activeInitiativeToken, gestures.liveDrag).x}
+                tokenY={applyLiveToken(activeInitiativeToken, gestures.liveDrag).y}
+                unitSize={unitSize}
+                tokenScale={activeInitiativeToken.scale}
+                mount="screen"
+                view={camera.view}
+                boardLayout={screenBoardLayout}
+              />
+            ) : null}
+            {combatGlows.map((glow) => {
+              const token = snap.tableEncounter?.tokens.find((item) => item.id === glow.tokenId);
+              if (token === undefined) {
+                return null;
+              }
+              const display = applyLiveToken(token, gestures.liveDrag);
+              return (
+                <CombatTokenGlow
+                  key={glow.id}
+                  tokenX={display.x}
+                  tokenY={display.y}
+                  unitSize={unitSize}
+                  tokenScale={token.scale}
+                  kind={glow.kind}
+                  mount="screen"
+                  view={camera.view}
+                  boardLayout={screenBoardLayout}
+                />
+              );
+            })}
+          </div>
+        ) : null}
       </div>
       {dice.stage}
       {snap.session ? (
@@ -947,28 +1175,65 @@ function CombatTokenGlow({
   unitSize,
   tokenScale,
   kind,
+  mount = "board",
+  view,
+  boardLayout,
 }: {
   tokenX: number;
   tokenY: number;
   unitSize: number;
   tokenScale: number;
   kind: "damage" | "heal";
+  mount?: "board" | "screen";
+  view?: BoardView;
+  boardLayout?: BoardLayout;
 }) {
-  const sizePx = unitSize * tokenScale;
-  const style: CSSProperties & { "--token-art-size": string } = {
-    left: `${String(tokenX * 100)}%`,
-    top: `${String(tokenY * 100)}%`,
-    "--token-art-size": `${String(sizePx)}px`,
-  };
+  const artBoardPx = unitSize * tokenScale;
+  const screenLayout =
+    mount === "screen" && view !== undefined && boardLayout !== undefined
+      ? screenTokenLayout(tokenX, tokenY, artBoardPx, view, boardLayout)
+      : null;
+  const anchorProps =
+    mount === "screen" ? screenTokenAnchorProps(tokenX, tokenY, artBoardPx, "glow") : {};
+  const style: CSSProperties =
+    screenLayout !== null
+      ? ({
+          left: `${String(screenLayout.centerX)}px`,
+          top: `${String(screenLayout.centerY)}px`,
+          width: `${String(screenLayout.screenPx)}px`,
+          height: `${String(screenLayout.screenPx)}px`,
+          "--token-screen-px": `${String(screenLayout.screenPx)}px`,
+        } as CSSProperties)
+      : ({
+          left: `${String(tokenX * 100)}%`,
+          top: `${String(tokenY * 100)}%`,
+          "--token-art-size": `${String(artBoardPx)}px`,
+        } as CSSProperties);
   return (
     <div
       className={kind === "damage" ? "combat-token-glow is-damage" : "combat-token-glow is-heal"}
       style={style}
+      {...anchorProps}
       aria-hidden="true"
     >
       <span className="combat-token-glow-ring" />
     </div>
   );
+}
+
+function useCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(any-pointer: coarse)").matches,
+  );
+  useEffect(() => {
+    const media = window.matchMedia("(any-pointer: coarse)");
+    const onChange = (): void => {
+      setCoarse(media.matches);
+    };
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
+  return coarse;
 }
 
 function BoardConfirmModal({
@@ -1033,47 +1298,80 @@ function hpFillRatio(currentHp: number, maxHp: number): number {
 function BoardToken({
   token,
   unitSize,
+  mount,
+  view,
+  boardLayout,
   selected,
   downed,
   artUrl,
+  identity,
   onPointerDown,
 }: {
   token: BattlegroundToken;
   unitSize: number;
+  mount: "board" | "screen";
+  view: BoardView;
+  boardLayout: BoardLayout;
   selected: boolean;
   downed: boolean;
   artUrl: string | null;
+  identity: "player" | "npc" | null;
   onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>, tokenId: TokenId) => void;
 }) {
-  const sizePx = unitSize * token.scale;
+  const artPx = tokenArtSizePx(unitSize, token.scale);
   const stamp = isStampToken(token);
+  const viewScale = view.scale;
   const shapeClass =
     token.shape === "square" ? "token-shape is-square" : token.shape === "circle" ? "token-shape is-circle" : null;
   const tokenClass = [
     "token",
+    stamp ? "is-stamp" : "is-portrait",
+    mount === "screen" ? "is-screen-mounted" : null,
     selected ? "is-selected" : null,
-    stamp ? "is-stamp" : null,
     downed ? "is-downed" : null,
   ]
     .filter((part): part is string => part !== null)
     .join(" ");
-  const tokenStyle: CSSProperties & { "--token-art-size": string } = {
-    left: `${String(token.x * 100)}%`,
-    top: `${String(token.y * 100)}%`,
-    "--token-art-size": `${String(sizePx)}px`,
-  };
+  const screenLayout =
+    mount === "screen" ? screenTokenLayout(token.x, token.y, artPx, view, boardLayout) : null;
+  const tokenStyle: CSSProperties =
+    mount === "screen" && screenLayout !== null
+      ? screenTokenButtonStyle(token.x, token.y, artPx, view, boardLayout)
+      : ({
+          left: `${String(token.x * 100)}%`,
+          top: `${String(token.y * 100)}%`,
+          "--token-art-size": `${String(artPx)}px`,
+          "--token-hit-size": `${String(stamp ? artPx : tokenHitSizeBoardPx(artPx, viewScale))}px`,
+        } as CSSProperties);
+  const decodePx = Math.max(
+    1,
+    Math.ceil(mount === "screen" && screenLayout !== null ? screenLayout.screenPx : artPx * viewScale),
+  );
+  const anchorProps =
+    mount === "screen" ? screenTokenAnchorProps(token.x, token.y, artPx, "token") : {};
   return (
     <button
       type="button"
       className={tokenClass}
       style={tokenStyle}
+      {...anchorProps}
       onPointerDown={(event) => onPointerDown(event, token.id)}
     >
       {shapeClass && token.color ? (
         <span className={shapeClass} style={{ background: token.color }} />
       ) : (
         <span className="token-art-wrap">
-          <img className="token-art" src={artUrl ?? defaultTokenDataUrl(token.label || "?", "stamp")} alt="" />
+          {identity !== null ? (
+            <span className={`token-identity-halo is-${identity}`} aria-hidden="true" />
+          ) : null}
+          <img
+            className="token-art"
+            src={artUrl ?? defaultTokenDataUrl(token.label || "?", "stamp")}
+            alt=""
+            decoding="async"
+            width={stamp ? undefined : decodePx}
+            height={stamp ? undefined : decodePx}
+          />
           {downed ? <span className="token-down-overlay" aria-hidden="true" /> : null}
         </span>
       )}
@@ -1109,6 +1407,9 @@ function TokenHpMeter({
 function TokenFloatControls({
   token,
   unitSize,
+  mount = "board",
+  view,
+  boardLayout,
   hp,
   canInspect,
   onDamage,
@@ -1120,6 +1421,9 @@ function TokenFloatControls({
 }: {
   token: BattlegroundToken;
   unitSize: number;
+  mount?: "board" | "screen";
+  view?: BoardView;
+  boardLayout?: BoardLayout;
   hp: { currentHp: number; maxHp: number } | null;
   canInspect: boolean;
   onDamage?: () => void;
@@ -1129,16 +1433,30 @@ function TokenFloatControls({
   onInspect: () => void;
   onRemove: () => void;
 }) {
-  const sizePx = unitSize * token.scale;
-  const controlStyle: CSSProperties & { "--token-ctrl-size": string } = {
-    left: `calc(${String(token.x * 100)}% + ${String(sizePx / 2 + 8)}px)`,
-    top: `${String(token.y * 100)}%`,
-    "--token-ctrl-size": `${String(sizePx * 0.8)}px`,
-  };
+  const artPx = tokenArtSizePx(unitSize, token.scale);
+  const screenLayout =
+    mount === "screen" && view !== undefined && boardLayout !== undefined
+      ? screenTokenLayout(token.x, token.y, artPx, view, boardLayout)
+      : null;
+  const controlStyle: CSSProperties =
+    mount === "screen" && screenLayout !== null
+      ? ({
+          left: `${String(screenLayout.centerX + screenLayout.screenPx / 2 + 8)}px`,
+          top: `${String(screenLayout.centerY)}px`,
+          "--token-screen-px": `${String(screenLayout.screenPx)}px`,
+        } as CSSProperties)
+      : ({
+          left: `calc(${String(token.x * 100)}% + ${String(artPx / 2 + 8)}px)`,
+          top: `${String(token.y * 100)}%`,
+          "--token-ctrl-size": `${String(artPx * 0.8)}px`,
+        } as CSSProperties);
+  const anchorProps =
+    mount === "screen" ? screenTokenAnchorProps(token.x, token.y, artPx, "controls") : {};
   return (
     <div
       className="token-float-controls"
       style={controlStyle}
+      {...anchorProps}
       onPointerDown={(event) => event.stopPropagation()}
     >
       {hp !== null ? (

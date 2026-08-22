@@ -94,16 +94,21 @@ export function useBoardObjectGestures(args: {
   findToken: (tokenId: TokenId) => BattlegroundToken | undefined;
   findVeil: (veilId: VeilId) => BattlegroundVeil | undefined;
   getStaging: () => { x: number; y: number } | null;
-  onCommitToken: (tokenId: TokenId, x: number, y: number) => void;
-  onCommitVeil: (veilId: VeilId, x: number, y: number) => void;
+  onCommitToken: (tokenId: TokenId, x: number, y: number) => void | Promise<void>;
+  onCommitVeil: (veilId: VeilId, x: number, y: number) => void | Promise<void>;
   onCommitVeilResize: (
     veilId: VeilId,
     x: number,
     y: number,
     widthCells: number,
     heightCells: number,
-  ) => void;
-  onCommitStaging: (x: number, y: number, boardWidth: number, boardHeight: number) => void;
+  ) => void | Promise<void>;
+  onCommitStaging: (
+    x: number,
+    y: number,
+    boardWidth: number,
+    boardHeight: number,
+  ) => void | Promise<void>;
   onTokenTap: (tokenId: TokenId, clientX: number, clientY: number) => void;
   onVeilTap: (veilId: VeilId) => void;
   onStagingTap: () => void;
@@ -143,52 +148,77 @@ export function useBoardObjectGestures(args: {
 
   const detachWindow = useRef((): void => undefined);
 
+  const clearLiveDragAfterCommit = (work: void | Promise<void>): void => {
+    void Promise.resolve(work).finally(() => {
+      setLiveDrag(null);
+    });
+  };
+
   const endSession = useRef((clientX: number, clientY: number): void => {
     const session = sessionRef.current;
     sessionRef.current = null;
     detachWindow.current();
     releaseGesture();
-    setLiveDrag(null);
     if (session === null) {
+      setLiveDrag(null);
       return;
     }
     const api = argsRef.current;
     if (session.kind === "token") {
       if (!session.dragging) {
+        setLiveDrag(null);
         api.onTokenTap(session.tokenId, clientX, clientY);
         return;
       }
-      api.onCommitToken(session.tokenId, session.x, session.y);
+      setLiveDrag({ kind: "token", tokenId: session.tokenId, x: session.x, y: session.y });
+      clearLiveDragAfterCommit(api.onCommitToken(session.tokenId, session.x, session.y));
       return;
     }
     if (session.kind === "veil") {
       if (!session.dragging) {
+        setLiveDrag(null);
         api.onVeilTap(session.veilId);
         return;
       }
-      api.onCommitVeil(session.veilId, session.x, session.y);
+      setLiveDrag({ kind: "veil", veilId: session.veilId, x: session.x, y: session.y });
+      clearLiveDragAfterCommit(api.onCommitVeil(session.veilId, session.x, session.y));
       return;
     }
     if (session.kind === "veil-resize") {
-      api.onCommitVeilResize(
-        session.veil.id,
-        session.veil.x,
-        session.veil.y,
-        session.veil.widthCells,
-        session.veil.heightCells,
+      setLiveDrag({
+        kind: "veil-resize",
+        veilId: session.veil.id,
+        x: session.veil.x,
+        y: session.veil.y,
+        widthCells: session.veil.widthCells,
+        heightCells: session.veil.heightCells,
+      });
+      clearLiveDragAfterCommit(
+        api.onCommitVeilResize(
+          session.veil.id,
+          session.veil.x,
+          session.veil.y,
+          session.veil.widthCells,
+          session.veil.heightCells,
+        ),
       );
       return;
     }
     if (!session.dragging) {
+      setLiveDrag(null);
       api.onStagingTap();
       return;
     }
+    setLiveDrag({ kind: "staging", x: session.x, y: session.y });
     const size = api.boardSize();
     if (size === null) {
+      setLiveDrag(null);
       api.onError("Battleground board is not mounted");
       return;
     }
-    api.onCommitStaging(session.x, session.y, size.width, size.height);
+    clearLiveDragAfterCommit(
+      api.onCommitStaging(session.x, session.y, size.width, size.height),
+    );
   }).current;
 
   const onWindowMove = useRef((event: PointerEvent): void => {

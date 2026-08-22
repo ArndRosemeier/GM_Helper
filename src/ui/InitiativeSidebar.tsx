@@ -13,6 +13,8 @@ import {
 import { useHost } from "../host/HostContext";
 import type { TokenId } from "../host/ids";
 import { defaultTokenDataUrl, tokenArtUrl } from "../lib/defaultToken";
+import type { BoardLayout, BoardView } from "./applyBoardCamera";
+import { screenTokenAnchorProps, screenTokenLayout } from "./tokenBoardMetrics";
 import { elementAtClientPoint } from "./domPoint";
 import { beginInitiativeDrag, endInitiativeDrag } from "../host/initiativeDragGate";
 
@@ -253,20 +255,40 @@ export function InitiativeTurnMarker({
   tokenY,
   unitSize,
   tokenScale,
+  mount = "board",
+  view,
+  boardLayout,
 }: {
   tokenX: number;
   tokenY: number;
   unitSize: number;
   tokenScale: number;
+  mount?: "board" | "screen";
+  view?: BoardView;
+  boardLayout?: BoardLayout;
 }) {
-  const sizePx = unitSize * tokenScale;
-  const style: CSSProperties & { "--token-art-size": string } = {
-    left: `${String(tokenX * 100)}%`,
-    top: `${String(tokenY * 100)}%`,
-    "--token-art-size": `${String(sizePx)}px`,
-  };
+  const artBoardPx = unitSize * tokenScale;
+  const screenLayout =
+    mount === "screen" && view !== undefined && boardLayout !== undefined
+      ? screenTokenLayout(tokenX, tokenY, artBoardPx, view, boardLayout)
+      : null;
+  const anchorProps =
+    mount === "screen" ? screenTokenAnchorProps(tokenX, tokenY, artBoardPx, "initiative") : {};
+  const style: CSSProperties =
+    screenLayout !== null
+      ? ({
+          left: `${String(screenLayout.centerX)}px`,
+          top: `${String(screenLayout.centerY)}px`,
+          width: `${String(screenLayout.screenPx)}px`,
+          "--token-screen-px": `${String(screenLayout.screenPx)}px`,
+        } as CSSProperties)
+      : ({
+          left: `${String(tokenX * 100)}%`,
+          top: `${String(tokenY * 100)}%`,
+          "--token-art-size": `${String(artBoardPx)}px`,
+        } as CSSProperties);
   return (
-    <div className="initiative-turn-marker" style={style} aria-hidden="true">
+    <div className="initiative-turn-marker" style={style} {...anchorProps} aria-hidden="true">
       <span className="initiative-turn-arrow">▼</span>
     </div>
   );

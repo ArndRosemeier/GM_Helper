@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { applyBoardCamera } from "./applyBoardCamera";
+import { applyScreenTokenOverlays } from "./applyScreenTokenOverlays";
+import type { BoardLayout, BoardView } from "./applyBoardCamera";
+import { focusBoardView } from "./tokenBoardMetrics";
 
 export const BOARD_SCALE_MIN = 0.35;
-export const BOARD_SCALE_MAX = 40;
+/** Enough to show ~1024px portrait art on a ~48px board token (≈21×) with headroom on Retina. */
+export const BOARD_SCALE_MAX = 80;
 
-export type BoardView = {
-  x: number;
-  y: number;
-  scale: number;
-};
+export type { BoardView };
 
 const START_VIEW: BoardView = { x: 0, y: 0, scale: 1 };
 
@@ -33,6 +34,7 @@ export function panBoardView(view: BoardView, dx: number, dy: number): BoardView
 }
 
 const PAN_THRESHOLD_PX = 8;
+const CAMERA_FOCUS_ANIM_MS = 380;
 
 type BoardPointer = {
   x: number;
@@ -45,22 +47,114 @@ type BoardPointer = {
 export function useBoardPanZoom(
   viewportRef: RefObject<HTMLDivElement | null>,
   layoutOriginRef: RefObject<{ x: number; y: number }>,
+  boardRef: RefObject<HTMLElement | null>,
+  tokenOverlayRef: RefObject<HTMLElement | null> | null = null,
+  boardLayoutRef: RefObject<BoardLayout> | null = null,
 ): {
   view: BoardView;
+  viewRef: RefObject<BoardView>;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
   zoomBy: (factor: number) => void;
+  focusOnBoardPoint: (normalizedPoint: { x: number; y: number }, targetScale: number) => void;
   pointersDown: number;
 } {
   const [view, setView] = useState<BoardView>(START_VIEW);
+  const liveView = useRef<BoardView>(START_VIEW);
+  const viewRef = liveView;
   const pointers = useRef(new Map<number, BoardPointer>());
   const [pointersDown, setPointersDown] = useState(0);
   const windowBound = useRef(false);
+  const gesturing = useRef(false);
+  const rafId = useRef<number | null>(null);
+  const animId = useRef<number | null>(null);
   const moveRef = useRef<(event: PointerEvent) => void>(() => undefined);
   const upRef = useRef<(event: PointerEvent) => void>(() => undefined);
 
   const syncPointerCount = (): void => {
     setPointersDown(pointers.current.size);
+  };
+
+  const applyDom = (): void => {
+    applyBoardCamera(boardRef.current, viewportRef.current, liveView.current, layoutOriginRef.current);
+    if (tokenOverlayRef !== null && boardLayoutRef !== null) {
+      applyScreenTokenOverlays(tokenOverlayRef.current, liveView.current, boardLayoutRef.current);
+    }
+  };
+
+  const scheduleApply = (): void => {
+    if (rafId.current !== null) {
+      return;
+    }
+    rafId.current = window.requestAnimationFrame(() => {
+      rafId.current = null;
+      applyDom();
+    });
+  };
+
+  const setCameraActive = (active: boolean): void => {
+    const board = boardRef.current;
+    if (!board) {
+      return;
+    }
+    if (active) {
+      board.classList.add("is-camera-active");
+    } else {
+      board.classList.remove("is-camera-active");
+    }
+  };
+
+  const commitView = (next: BoardView): void => {
+    liveView.current = next;
+    setView(next);
+    applyDom();
+    setCameraActive(false);
+    gesturing.current = false;
+  };
+
+  const updateLive = (next: BoardView): void => {
+    liveView.current = next;
+    scheduleApply();
+  };
+
+  const cancelCameraAnimation = (): void => {
+    if (animId.current !== null) {
+      window.cancelAnimationFrame(animId.current);
+      animId.current = null;
+    }
+  };
+
+  const animateToView = (target: BoardView, durationMs = CAMERA_FOCUS_ANIM_MS): void => {
+    cancelCameraAnimation();
+    const start: BoardView = liveView.current;
+    if (
+      Math.hypot(target.x - start.x, target.y - start.y) < 0.5 &&
+      Math.abs(target.scale - start.scale) < 0.001
+    ) {
+      commitView(target);
+      return;
+    }
+    const startTime = performance.now();
+    gesturing.current = true;
+    setCameraActive(true);
+
+    const tick = (): void => {
+      const progress = Math.min(1, (performance.now() - startTime) / durationMs);
+      const eased = easeOutCubic(progress);
+      const next: BoardView = {
+        x: start.x + (target.x - start.x) * eased,
+        y: start.y + (target.y - start.y) * eased,
+        scale: start.scale + (target.scale - start.scale) * eased,
+      };
+      if (progress >= 1) {
+        animId.current = null;
+        commitView(target);
+        return;
+      }
+      updateLive(next);
+      animId.current = window.requestAnimationFrame(tick);
+    };
+    animId.current = window.requestAnimationFrame(tick);
   };
 
   const detachWindow = (): void => {
@@ -119,11 +213,10 @@ export function useBoardPanZoom(
       const localPrev = clientPointInViewport(node, prevMid.x, prevMid.y);
       const localNext = clientPointInViewport(node, nextMid.x, nextMid.y);
       const origin = layoutOriginRef.current;
-      setView((current) => {
-        const zoomed =
-          prevDist > 0 ? zoomBoardView(current, localPrev.x, localPrev.y, nextDist / prevDist, origin) : current;
-        return panBoardView(zoomed, localNext.x - localPrev.x, localNext.y - localPrev.y);
-      });
+      const current = liveView.current;
+      const zoomed =
+        prevDist > 0 ? zoomBoardView(current, localPrev.x, localPrev.y, nextDist / prevDist, origin) : current;
+      updateLive(panBoardView(zoomed, localNext.x - localPrev.x, localNext.y - localPrev.y));
       return;
     }
     if (!next.panning) {
@@ -135,7 +228,7 @@ export function useBoardPanZoom(
     }
     event.preventDefault();
     const delta = clientDeltaToLocal(node, next.x - previous.x, next.y - previous.y);
-    setView((current) => panBoardView(current, delta.x, delta.y));
+    updateLive(panBoardView(liveView.current, delta.x, delta.y));
   };
 
   upRef.current = (event: PointerEvent): void => {
@@ -146,8 +239,16 @@ export function useBoardPanZoom(
     syncPointerCount();
     if (pointers.current.size === 0) {
       detachWindow();
+      commitView(liveView.current);
     }
   };
+
+  useEffect(() => {
+    if (!gesturing.current) {
+      liveView.current = view;
+      applyDom();
+    }
+  }, [view]);
 
   useEffect(() => {
     const node = viewportRef.current;
@@ -159,19 +260,32 @@ export function useBoardPanZoom(
       const local = clientPointInViewport(node, event.clientX, event.clientY);
       const factor = event.ctrlKey ? Math.exp(-event.deltaY * 0.01) : event.deltaY < 0 ? 1.12 : 1 / 1.12;
       const origin = layoutOriginRef.current;
-      setView((current) => zoomBoardView(current, local.x, local.y, factor, origin));
+      const next = zoomBoardView(liveView.current, local.x, local.y, factor, origin);
+      commitView(next);
     };
     node.addEventListener("wheel", onWheel, { passive: false });
+    applyDom();
     return () => {
       node.removeEventListener("wheel", onWheel);
       detachWindow();
       pointers.current.clear();
+      if (rafId.current !== null) {
+        window.cancelAnimationFrame(rafId.current);
+        rafId.current = null;
+      }
+      cancelCameraAnimation();
     };
-  }, [viewportRef, layoutOriginRef]);
+  }, [viewportRef, layoutOriginRef, boardRef, tokenOverlayRef, boardLayoutRef]);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.pointerType === "mouse" && event.button !== 0) {
       return;
+    }
+    if (pointers.current.size === 0) {
+      cancelCameraAnimation();
+      liveView.current = view;
+      gesturing.current = true;
+      setCameraActive(true);
     }
     pointers.current.set(event.pointerId, {
       x: event.clientX,
@@ -201,10 +315,35 @@ export function useBoardPanZoom(
     const originX = node.clientWidth / 2;
     const originY = node.clientHeight / 2;
     const origin = layoutOriginRef.current;
-    setView((current) => zoomBoardView(current, originX, originY, factor, origin));
+    commitView(zoomBoardView(liveView.current, originX, originY, factor, origin));
   };
 
-  return { view, onPointerDown, onPointerUp, zoomBy, pointersDown };
+  const focusOnBoardPoint = (normalizedPoint: { x: number; y: number }, targetScale: number): void => {
+    const viewport = viewportRef.current;
+    const board = boardRef.current;
+    if (!viewport || !board) {
+      throw new Error("Board viewport is not mounted");
+    }
+    const boardWidth = board.offsetWidth;
+    const boardHeight = board.offsetHeight;
+    if (!(boardWidth > 0) || !(boardHeight > 0)) {
+      throw new Error("Battleground board has no size");
+    }
+    const scale = clamp(targetScale, BOARD_SCALE_MIN, BOARD_SCALE_MAX);
+    const origin = layoutOriginRef.current;
+    animateToView(
+      focusBoardView(
+        liveView.current,
+        { width: viewport.clientWidth, height: viewport.clientHeight },
+        { width: boardWidth, height: boardHeight },
+        origin,
+        normalizedPoint,
+        scale,
+      ),
+    );
+  };
+
+  return { view, viewRef, onPointerDown, onPointerUp, zoomBy, focusOnBoardPoint, pointersDown };
 }
 
 export function clientPointInViewport(node: HTMLElement, clientX: number, clientY: number): { x: number; y: number } {
@@ -272,4 +411,9 @@ function midpoint(a: { x: number; y: number }, b: { x: number; y: number }): { x
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function easeOutCubic(t: number): number {
+  const x = 1 - t;
+  return 1 - x * x * x;
 }
