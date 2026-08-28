@@ -8,3 +8,6 @@ npm run dev
 ```
 
 Install to the iPad home screen from Safari. Add an OpenRouter key in Settings if you want AI NPC lift, portraits, or map sketches. The core works offline.
+
+Linux: `./ship.sh "message"` / `./deploy-sync.sh` — set `FTP_PASSWORD` in the env (never commit it).
+Windows: `deploy-sync.ps1` / `deploy-sync.bat` still exist for the same incremental FTP deploy.
