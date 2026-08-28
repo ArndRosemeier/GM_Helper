@@ -5,11 +5,13 @@ import { DEFAULT_CAMPAIGN_GENRE } from "../host/types";
 import { saveBlobAsFile } from "../lib/saveBlob";
 import { AddUrlEntity } from "./AddUrlEntity";
 import { SomeoneHere } from "./SomeoneHere";
+import { Modal } from "./Modal";
 
 export function SceneRail() {
   const { store, snap } = useHost();
   const [sessionTitle, setSessionTitle] = useState("");
   const [sessionGenre, setSessionGenre] = useState(snap.session?.genre ?? DEFAULT_CAMPAIGN_GENRE);
+  const [testOpen, setTestOpen] = useState(false);
 
   useEffect(() => {
     setSessionGenre(snap.session?.genre ?? DEFAULT_CAMPAIGN_GENRE);
@@ -70,7 +72,20 @@ export function SceneRail() {
             }}
           />
         </label>
+        <button type="button" onClick={() => setTestOpen(true)}>
+          Test
+        </button>
       </div>
+      {testOpen ? (
+        <Modal title="Success!" onClose={() => setTestOpen(false)} className="busy-modal" cardClassName="busy-modal-card">
+          <h2>Success!</h2>
+          <div className="card-actions">
+            <button type="button" onClick={() => setTestOpen(false)}>
+              OK
+            </button>
+          </div>
+        </Modal>
+      ) : null}
       <h2>Campaign</h2>
       <label>
         Current
