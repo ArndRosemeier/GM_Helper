@@ -1,0 +1,44 @@
+name: Deploy to futuremagic.de
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build domainfactory production bundle
+        run: npm run build:domainfactory
+
+      - name: Verify dist/index.html exists
+        run: |
+          if [ ! -f dist/index.html ]; then
+            echo "dist/index.html is missing after build" >&2
+            exit 1
+          fi
+
+      - name: Upload dist/ via FTP (incremental sync)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ftp.futuremagic.de
+          username: 12529-Pyrion
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftp
+          local-dir: ./dist/
+          server-dir: /webseiten/GM_Helper/
+          dangerous-clean-slate: false
