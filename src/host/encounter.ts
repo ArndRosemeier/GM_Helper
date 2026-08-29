@@ -33,6 +33,7 @@ export function emptyEncounterBoard(): EncounterBoard {
     veils: [],
     gridSize: board.gridSize,
     tokenSize: board.tokenSize,
+    sceneryMovementLocked: false,
     initiativeEnabled: false,
     initiativeOrder: [],
     stage: null,
@@ -53,6 +54,7 @@ export function boardOf(state: EncounterBoard): EncounterBoard {
     veils: state.veils,
     gridSize: state.gridSize,
     tokenSize: state.tokenSize,
+    sceneryMovementLocked: state.sceneryMovementLocked,
     initiativeEnabled: state.initiativeEnabled,
     initiativeOrder: state.initiativeOrder,
     stage: state.stage,
@@ -82,6 +84,10 @@ export function isFighterToken(token: BattlegroundToken, entities: ReadonlyArray
   }
   const entity = entities.find((item) => item.id === token.entityId);
   return entity !== undefined && isFighterEntity(entity);
+}
+
+export function isSceneryToken(token: BattlegroundToken): boolean {
+  return token.shape === "circle" || token.shape === "square";
 }
 
 /** Portrait tokens linked to a card in this encounter. */

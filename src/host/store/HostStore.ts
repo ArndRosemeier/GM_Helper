@@ -79,6 +79,7 @@ import {
   isEncounterCard,
   isFighterEntity,
   isPlayerCard,
+  isSceneryToken,
   restoreAllNpcHp,
   scrubEntityFromBoard,
   stagingGroundAt,
@@ -1466,15 +1467,30 @@ export class HostStore {
     await this.addToken(entityId, true, null);
   }
 
-  async moveToken(tokenId: TokenId, x: number, y: number): Promise<void> {
+  async setSceneryMovementLocked(locked: boolean): Promise<void> {
     const encounter = await this.ensureTargetEncounter();
-    await this.putEncounter({
-      ...encounter,
-      tokens: this.mapEncounterToken(encounter, tokenId, (token) => ({ ...token, x, y })),
-    });
+    if (encounter.sceneryMovementLocked === locked) {
+      return;
+    }
+    await this.putEncounter({ ...encounter, sceneryMovementLocked: locked });
     this.emit();
   }
 
+  async moveToken(tokenId: TokenId, x: number, y: number): Promise<void> {
+    const encounter = await this.ensureTargetEncounter();
+    const token = encounter.tokens.find((item) => item.id === tokenId);
+    if (token === undefined) {
+      this.setErrorAndThrow(`Encounter has no token ${tokenId}`);
+    }
+    if (encounter.sceneryMovementLocked && isSceneryToken(token)) {
+      this.setErrorAndThrow("Scenery movement is locked");
+    }
+    await this.putEncounter({
+      ...encounter,
+      tokens: this.mapEncounterToken(encounter, tokenId, (item) => ({ ...item, x, y })),
+    });
+    this.emit();
+  }
   async snapEncounterTokens(boardWidth: number, boardHeight: number): Promise<void> {
     if (!(boardWidth > 0) || !(boardHeight > 0)) {
       this.setErrorAndThrow("Battleground board has no size");
@@ -1599,6 +1615,9 @@ export class HostStore {
       this.setErrorAndThrow("Veil position must be a finite board coordinate");
     }
     const encounter = await this.ensureTargetEncounter();
+    if (encounter.sceneryMovementLocked) {
+      this.setErrorAndThrow("Scenery movement is locked");
+    }
     await this.putEncounter({
       ...encounter,
       veils: this.mapEncounterVeil(encounter, veilId, (veil) => ({ ...veil, x, y })),
@@ -1623,6 +1642,9 @@ export class HostStore {
       this.setErrorAndThrow(`Veil height must be an integer of at least ${String(VEIL_MIN_CELLS)} cells`);
     }
     const encounter = await this.ensureTargetEncounter();
+    if (encounter.sceneryMovementLocked) {
+      this.setErrorAndThrow("Scenery movement is locked");
+    }
     await this.putEncounter({
       ...encounter,
       veils: this.mapEncounterVeil(encounter, veilId, (veil) => ({

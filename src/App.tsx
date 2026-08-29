@@ -8,6 +8,7 @@ import { ErrorBanner } from "./ui/ErrorBanner";
 import { MediaViewer } from "./ui/MediaViewer";
 import { UrlViewer } from "./ui/UrlViewer";
 import { useUiScale } from "./ui/useUiScale";
+import { useViewportFit } from "./ui/useViewportFit";
 import { featureRegistry } from "./host/features/singleton";
 import "./features/registerAll";
 
@@ -33,6 +34,7 @@ function GlobalOverlays() {
 function Surfaces() {
   const { store, snap } = useHost();
   useUiScale();
+  useViewportFit();
 
   if (!snap.ready) {
     return (

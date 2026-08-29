@@ -3,7 +3,7 @@ import { useHost } from "../host/HostContext";
 
 /**
  * Applies persisted UI scale via CSS --ui-scale + zoom.
- * Root height is compensated in CSS (100dvh / scale) so zoom does not leave
+ * Root size is compensated in CSS (--viewport-* / scale) so zoom does not leave
  * empty space or a spurious page scrollbar.
  */
 export function useUiScale(): void {

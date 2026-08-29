@@ -356,6 +356,7 @@ export type EncounterBoard = {
   /** Cell size in CSS pixels. `null` hides the grid. */
   gridSize: number | null;
   tokenSize: number;
+  sceneryMovementLocked: boolean;
   initiativeEnabled: boolean;
   /** Turn order by token id. Indexes `activeIndex` when initiative is on. */
   initiativeOrder: ReadonlyArray<TokenId>;

@@ -13,6 +13,8 @@
   --radius: 18px;
   --tap: 44px;
   --ui-scale: 1;
+  --viewport-width: 100vw;
+  --viewport-height: 100dvh;
   /* Layout inset under the status bar / notch. Coarse pointers add an OS steal band. */
   --os-top-unresponsive: 0px;
   --inset-top: max(12px, env(safe-area-inset-top, 0px));
@@ -34,10 +36,11 @@
 html {
   zoom: var(--ui-scale);
   margin: 0;
-  width: calc(100vw / var(--ui-scale));
-  height: calc(100dvh / var(--ui-scale));
-  min-height: calc(100dvh / var(--ui-scale));
+  width: calc(var(--viewport-width) / var(--ui-scale));
+  height: calc(var(--viewport-height) / var(--ui-scale));
+  min-height: calc(var(--viewport-height) / var(--ui-scale));
   overflow: hidden;
+  overscroll-behavior: none;
   background: radial-gradient(1200px 800px at 10% 0%, #2a2218 0%, var(--bg) 55%);
 }
 
@@ -61,6 +64,7 @@ body,
   height: 100%;
   min-height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
   background: inherit;
 }
 
@@ -1471,6 +1475,7 @@ body.is-card-dragging .encounter-roster {
   --table-corner-actions-height: calc(var(--tap) * 2 + 8px);
   position: relative;
   height: 100%;
+  touch-action: none;
   background-color: #6e6b66;
   background-image:
     radial-gradient(circle at 20% 30%, rgb(255 255 255 / 0.045) 0 1px, transparent 1px),
@@ -2578,6 +2583,7 @@ body.is-card-dragging .encounter-roster {
 
 .board-zoom,
 .board-set-stage,
+.board-move-lock,
 .board-set-staging,
 .board-restore-npc-hp,
 .board-add-card,
@@ -2605,6 +2611,15 @@ body.is-card-dragging .encounter-roster {
 
 .board-set-stage {
   background: #6b8f3a;
+}
+
+.board-move-lock {
+  background: #5f5548;
+}
+
+.board-move-lock.is-active {
+  background: #a06432;
+  box-shadow: 0 0 0 3px rgba(255, 220, 150, 0.72), 0 2px 6px rgba(0, 0, 0, 0.45);
 }
 
 .board-set-staging {

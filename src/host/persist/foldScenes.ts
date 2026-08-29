@@ -33,6 +33,7 @@ export function foldScenesIntoEncounters(
         ...existing,
         gridSize: board.gridSize,
         tokenSize: board.tokenSize,
+        sceneryMovementLocked: false,
         tokens: preferExistingTokens ? existing.tokens : board.tokens,
       });
       continue;
@@ -46,6 +47,7 @@ export function foldScenesIntoEncounters(
       veils: [],
       gridSize: board.gridSize,
       tokenSize: board.tokenSize,
+      sceneryMovementLocked: false,
       initiativeEnabled: false,
       initiativeOrder: [],
       stage: null,
@@ -65,6 +67,7 @@ export function withBoardDefaults(encounter: EncounterState): EncounterState {
       typeof encounter.tokenSize === "number" && Number.isInteger(encounter.tokenSize)
         ? encounter.tokenSize
         : fallback.tokenSize,
+    sceneryMovementLocked: encounter.sceneryMovementLocked === true,
     initiativeEnabled: encounter.initiativeEnabled === true,
     initiativeOrder: encounter.initiativeOrder ?? [],
     stage: encounter.stage ?? null,

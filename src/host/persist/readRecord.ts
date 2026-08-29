@@ -352,6 +352,7 @@ export function readEncounterBoard(
         ? board.gridSize
         : readGridSize(record.gridSize, ownerId, warnings),
     tokenSize: readTokenSize(record.tokenSize, record.gridSize, ownerId, warnings),
+    sceneryMovementLocked: record.sceneryMovementLocked === true,
     initiativeEnabled,
     initiativeOrder,
     stage: readStageSnapshot(record.stage, ownerId, warnings, store),

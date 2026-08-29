@@ -239,6 +239,7 @@ export function TableSurface() {
   );
   const veils = boardVeils ?? EMPTY_VEILS;
   const stagingGround = snap.tableEncounter?.stagingGround ?? null;
+  const sceneryMovementLocked = snap.tableEncounter?.sceneryMovementLocked ?? false;
   const gridSize = snap.tableEncounter?.gridSize ?? null;
   const unitSize =
     gridSize !== null
@@ -487,6 +488,7 @@ export function TableSurface() {
       const staging = snap.tableEncounter?.stagingGround ?? null;
       return staging === null ? null : { x: staging.x, y: staging.y };
     },
+    movementLocked: () => sceneryMovementLocked,
     onCommitToken: (tokenId, x, y) => {
       const work = store.moveToken(tokenId, x, y);
       store.run(work);
@@ -694,6 +696,7 @@ export function TableSurface() {
                     veil={applyLiveVeil(veil, gestures.liveDrag)}
                     cellPx={cellPx}
                     selected={veil.id === selectedVeilId}
+                    movementLocked={sceneryMovementLocked}
                     onPointerDown={gestures.onVeilPointerDown}
                     onResizePointerDown={gestures.onVeilResizePointerDown}
                   />
@@ -793,6 +796,7 @@ export function TableSurface() {
                     veil={applyLiveVeil(veil, gestures.liveDrag)}
                     cellPx={cellPx}
                     selected={veil.id === selectedVeilId}
+                    movementLocked={sceneryMovementLocked}
                     onPointerDown={gestures.onVeilPointerDown}
                     onResizePointerDown={gestures.onVeilResizePointerDown}
                   />
@@ -1040,6 +1044,16 @@ export function TableSurface() {
           onClick={() => camera.zoomBy(1.25)}
         >
           +
+        </button>
+        <button
+          type="button"
+          className={sceneryMovementLocked ? "board-move-lock is-active" : "board-move-lock"}
+          aria-label={sceneryMovementLocked ? "Unlock scenery movement" : "Lock scenery movement"}
+          aria-pressed={sceneryMovementLocked}
+          title={sceneryMovementLocked ? "Unlock veils, fog, and geometric forms" : "Lock veils, fog, and geometric forms"}
+          onClick={() => store.run(store.setSceneryMovementLocked(!sceneryMovementLocked))}
+        >
+          {sceneryMovementLocked ? "🔒" : "🔓"}
         </button>
         <button
           type="button"
@@ -1584,12 +1598,14 @@ function BoardVeil({
   veil,
   cellPx,
   selected,
+  movementLocked,
   onPointerDown,
   onResizePointerDown,
 }: {
   veil: BattlegroundVeil;
   cellPx: number;
   selected: boolean;
+  movementLocked: boolean;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>, veilId: VeilId) => void;
   onResizePointerDown: (
     event: ReactPointerEvent<HTMLButtonElement>,
@@ -1625,7 +1641,7 @@ function BoardVeil({
           <span className="veil-fog" />
         </span>
       ) : null}
-      {selected
+      {selected && !movementLocked
         ? VEIL_EDGES.map((edge) => (
             <button
               key={edge}

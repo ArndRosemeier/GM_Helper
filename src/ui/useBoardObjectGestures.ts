@@ -8,6 +8,7 @@ import {
   endBoardGesture,
 } from "../host/boardGestureGate";
 import { resizeVeilFromEdge, type VeilEdge } from "../host/veil";
+import { isSceneryToken } from "../host/encounter";
 
 const DRAG_THRESHOLD_PX = 8;
 
@@ -46,6 +47,7 @@ type TokenSession = {
   kind: "token";
   pointerId: number;
   tokenId: TokenId;
+  movable: boolean;
   scale: number;
   originClientX: number;
   originClientY: number;
@@ -58,6 +60,7 @@ type VeilSession = {
   kind: "veil";
   pointerId: number;
   veilId: VeilId;
+  movable: boolean;
   widthCells: number;
   heightCells: number;
   originClientX: number;
@@ -94,6 +97,7 @@ export function useBoardObjectGestures(args: {
   findToken: (tokenId: TokenId) => BattlegroundToken | undefined;
   findVeil: (veilId: VeilId) => BattlegroundVeil | undefined;
   getStaging: () => { x: number; y: number } | null;
+  movementLocked: () => boolean;
   onCommitToken: (tokenId: TokenId, x: number, y: number) => void | Promise<void>;
   onCommitVeil: (veilId: VeilId, x: number, y: number) => void | Promise<void>;
   onCommitVeilResize: (
@@ -228,6 +232,9 @@ export function useBoardObjectGestures(args: {
     }
     const api = argsRef.current;
     if (session.kind === "token" || session.kind === "veil" || session.kind === "staging") {
+      if ((session.kind === "token" || session.kind === "veil") && !session.movable) {
+        return;
+      }
       if (!session.dragging) {
         const travel = Math.hypot(event.clientX - session.originClientX, event.clientY - session.originClientY);
         if (travel < DRAG_THRESHOLD_PX) {
@@ -358,6 +365,7 @@ export function useBoardObjectGestures(args: {
       kind: "token",
       pointerId: event.pointerId,
       tokenId,
+      movable: !isSceneryToken(token) || !argsRef.current.movementLocked(),
       scale: token.scale,
       originClientX: event.clientX,
       originClientY: event.clientY,
@@ -387,6 +395,7 @@ export function useBoardObjectGestures(args: {
       kind: "veil",
       pointerId: event.pointerId,
       veilId,
+      movable: !argsRef.current.movementLocked(),
       widthCells: veil.widthCells,
       heightCells: veil.heightCells,
       originClientX: event.clientX,
@@ -411,6 +420,9 @@ export function useBoardObjectGestures(args: {
     const veil = argsRef.current.findVeil(veilId);
     if (veil === undefined) {
       argsRef.current.onError(`Encounter has no veil ${veilId}`);
+      return;
+    }
+    if (argsRef.current.movementLocked()) {
       return;
     }
     if (sessionRef.current !== null) {
