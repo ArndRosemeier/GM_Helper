@@ -2575,7 +2575,7 @@ body.is-card-dragging .encounter-roster {
   right: max(10px, env(safe-area-inset-right));
   z-index: 11;
   display: grid;
-  grid-template-columns: repeat(4, var(--tap));
+  grid-template-columns: repeat(5, var(--tap));
   grid-auto-rows: var(--tap);
   gap: 8px;
   align-items: center;
