@@ -78,6 +78,7 @@ import {
   fillTokenCurrentHp,
   isEncounterCard,
   isFighterEntity,
+  isNpcCard,
   isPlayerCard,
   isSceneryToken,
   restoreAllNpcHp,
@@ -1727,7 +1728,8 @@ export class HostStore {
       return;
     }
     const existing = this.encounter;
-    if (existing?.tokens.some((token) => token.entityId === entityId)) {
+    // NPC cards are templates: two Trolls are two instances, not a duplicate.
+    if (!isNpcCard(entity) && existing?.tokens.some((token) => token.entityId === entityId)) {
       this.setErrorAndThrow(`“${entity.runCard.title}” is already in this encounter`);
     }
     const token = tokenFromEntity(entity, existing?.tokens.length ?? 0, existing?.live === true, null);
