@@ -16,7 +16,7 @@ function isImageMime(type: string): boolean {
 }
 
 /** Image from a paste event. iOS Safari fills this when Photos is copied, even if clipboard.read is empty. */
-export function imageFromPasteEvent(event: ClipboardEvent): File | Blob | null {
+export function imageFromPasteEvent(event: { clipboardData: DataTransfer | null }): File | Blob | null {
   const data = event.clipboardData;
   if (!data) {
     return null;
