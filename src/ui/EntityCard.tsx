@@ -19,7 +19,7 @@ import {
   textFrom,
   tracksFrom,
 } from "../host/runCard";
-import { clipboardReadSupported, readClipboardImage } from "../lib/clipboardImage";
+import { imageFromPasteEvent, readClipboardImage } from "../lib/clipboardImage";
 import { isIntegerDraft, parseIntegerField } from "../lib/integerField";
 import { saveBlobAsFile } from "../lib/saveBlob";
 import { CardUrlFrame } from "./CardUrlFrame";
@@ -89,8 +89,26 @@ export function EntityCard({
   const focused = snap.focus?.id === entity.id;
   const drag = useCardEncounterDrag(entity.id, entity.runCard.title);
   const canGrab = cardHasGrabSource(entity, snap.sources);
-  const clipboardImageSupported = clipboardReadSupported();
   const encounterCard = isEncounterCard(entity);
+
+  useEffect(() => {
+    if (!focused) {
+      return;
+    }
+    const onPaste = (event: ClipboardEvent): void => {
+      const pasted = imageFromPasteEvent(event);
+      if (!pasted) {
+        return;
+      }
+      event.preventDefault();
+      const name = "name" in pasted ? pasted.name : "";
+      store.run(store.insertEntityImage(entity.id, pasted, name));
+    };
+    document.addEventListener("paste", onPaste);
+    return () => {
+      document.removeEventListener("paste", onPaste);
+    };
+  }, [focused, entity.id, store]);
 
   useEffect(() => {
     if (controlled) {
@@ -199,6 +217,15 @@ export function EntityCard({
   return (
     <article
       className={`card entity-card focus-card${expanded && !encounterCard ? "" : " compact"}${focused ? " is-focus" : ""}`}
+      onPaste={(event) => {
+        const pasted = imageFromPasteEvent(event);
+        if (!pasted) {
+          return;
+        }
+        event.preventDefault();
+        const name = "name" in pasted ? pasted.name : "";
+        store.run(store.insertEntityImage(entity.id, pasted, name));
+      }}
     >
       <div className="focus-header">
         {tokenUrl ? (
@@ -340,28 +367,27 @@ export function EntityCard({
             <button type="button" disabled={!canGrab} onClick={() => setGrabbing(true)}>
               Grab image
             </button>
-            {clipboardImageSupported ? (
-              <button
-                type="button"
-                onClick={() =>
-                  store.run(readClipboardImage().then((blob) => store.insertEntityImage(entity.id, blob)))
-                }
-              >
-                Insert image
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={() =>
+                store.run(readClipboardImage().then((blob) => store.insertEntityImage(entity.id, blob)))
+              }
+            >
+              Insert image
+            </button>
             <label className="file-label">
               Add image
               <input
                 type="file"
-                accept="image/*"
+                // iOS/WebKit can refuse Photos picks when accept is MIME-only.
+                accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp,.gif"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = "";
                   if (!file) {
                     return;
                   }
-                  store.run(store.insertEntityImage(entity.id, file));
+                  store.run(store.insertEntityImage(entity.id, file, file.name));
                 }}
               />
             </label>

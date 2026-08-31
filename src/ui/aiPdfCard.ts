@@ -8,17 +8,5 @@ export async function runAddCardWithAi(
   topic: string,
   tryGetImage: boolean,
 ): Promise<void> {
-  let includeImages = false;
-  if (tryGetImage) {
-    includeImages = await store.chatModelAcceptsImages();
-    if (!includeImages) {
-      const proceed = window.confirm(
-        "This chat model cannot look at pictures. Continue with the page text only?",
-      );
-      if (!proceed) {
-        return;
-      }
-    }
-  }
-  await store.generateAiCardFromPdfPage(sourceId, page, topic, includeImages);
+  await store.generateAiCardFromPdfPage(sourceId, page, topic, tryGetImage);
 }

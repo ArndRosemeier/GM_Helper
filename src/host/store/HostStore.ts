@@ -136,6 +136,7 @@ import {
   type CardArchiveData,
 } from "../../lib/archive";
 import { yieldToUi } from "../../lib/yieldToUi";
+import { normalizeImageBlob } from "../../lib/imagePng";
 import { createCatalog, rebuildCatalog, searchCatalog, type SearchDoc } from "../search/catalog";
 import {
   adjustTrackInCard,
@@ -948,7 +949,7 @@ export class HostStore {
     sourceId: SourceId,
     pageNumber: number,
     topicRaw: string,
-    includeImages: boolean,
+    tryGetImage: boolean,
   ): Promise<Entity> {
     const topic = topicRaw.trim();
     if (topic.length === 0) {
@@ -965,7 +966,18 @@ export class HostStore {
       title: "Adding a card with AI",
       detail: `Reading page ${String(pageNumber)} and the next page.`,
     });
+    await yieldToUi();
     try {
+      let includeImages = false;
+      if (tryGetImage) {
+        includeImages = await openRouterChatAcceptsImages(this.requireOpenRouter());
+        if (!includeImages) {
+          this.setBusy({
+            title: "Adding a card with AI",
+            detail: "This chat model cannot look at pictures. Using the page text only.",
+          });
+        }
+      }
       const { openPdfDocument } = await import("../../lib/pdfjsRuntime");
       const { extractPdfPagesImages, preparePdfImagesForChat } = await import("../../lib/pdfImages");
       const document = await openPdfDocument(await source.bytes.arrayBuffer());
@@ -1252,14 +1264,15 @@ export class HostStore {
     await this.placeVisibleToken(entityId);
   }
 
-  async insertEntityImage(entityId: EntityId, blob: Blob): Promise<void> {
+  async insertEntityImage(entityId: EntityId, blob: Blob, fileName = ""): Promise<void> {
     const entity = this.requireEntity(entityId);
+    const picture = await normalizeImageBlob(blob, fileName);
     const media: MediaRecord = {
       id: newMediaId(),
       campaignId: entity.campaignId,
-      mimeType: blob.type || "image/png",
+      mimeType: picture.type || "image/jpeg",
       role: "other",
-      bytes: blob,
+      bytes: picture,
     };
     await this.putMedia(media);
     await this.updateRunCard(
