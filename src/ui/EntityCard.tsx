@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { cardOriginal, cardTypeLabel } from "../host/cardModel";
+import { cardOriginal, cardTypeLabel, cardTypeOf } from "../host/cardModel";
 import { combatHpForToken, isEncounterCard, isPlayerCard } from "../host/encounter";
 import { useHost } from "../host/HostContext";
 import { asSessionId } from "../host/ids";
@@ -216,7 +216,7 @@ export function EntityCard({
 
   return (
     <article
-      className={`card entity-card focus-card${expanded && !encounterCard ? "" : " compact"}${focused ? " is-focus" : ""}`}
+      className={`card entity-card focus-card card-type-${cardTypeOf(entity)}${expanded && !encounterCard ? "" : " compact"}${focused ? " is-focus" : ""}`}
       onPaste={(event) => {
         const pasted = imageFromPasteEvent(event);
         if (!pasted) {

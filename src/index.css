@@ -251,6 +251,44 @@ h3 {
   overflow: visible;
 }
 
+/*
+ * Card faces carry their type: a tint plus a colored left edge. An accidental
+ * category (a mob filed as a Player, say) is then obvious at a glance.
+ */
+.card-type-player,
+.card-type-npc,
+.card-type-map,
+.card-type-encounter,
+.card-type-misc {
+  border-left: 5px solid var(--card-type-edge, var(--line));
+  background-image: linear-gradient(var(--card-type-tint), var(--card-type-tint));
+}
+
+.card-type-player {
+  --card-type-tint: rgb(20 235 105 / 0.1);
+  --card-type-edge: rgb(20 235 105 / 0.6);
+}
+
+.card-type-npc {
+  --card-type-tint: rgb(255 40 45 / 0.1);
+  --card-type-edge: rgb(255 40 45 / 0.6);
+}
+
+.card-type-map {
+  --card-type-tint: rgb(96 168 255 / 0.1);
+  --card-type-edge: rgb(96 168 255 / 0.55);
+}
+
+.card-type-encounter {
+  --card-type-tint: rgb(212 164 90 / 0.12);
+  --card-type-edge: rgb(212 164 90 / 0.7);
+}
+
+.card-type-misc {
+  --card-type-tint: rgb(255 255 255 / 0.02);
+  --card-type-edge: rgb(255 255 255 / 0.16);
+}
+
 .empty-card {
   display: grid;
   place-content: center;
@@ -2215,6 +2253,15 @@ body.is-card-dragging .encounter-roster {
   font-size: 12px;
   color: var(--ink-dim);
   flex-shrink: 0;
+}
+
+.bg-card-picker-list button.is-not-placeable {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.bg-card-picker-list button.is-not-placeable em {
+  color: var(--brass);
 }
 
 .token-art-mini.is-circle,

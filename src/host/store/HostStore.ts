@@ -60,6 +60,7 @@ import {
   type VeilKind,
 } from "../types";
 import { migrateOpenDatabase, migrationBanner, SCHEMA_VERSION } from "../persist";
+import { isMapCard } from "../cardModel";
 import { migrateArchivePayload, migrateCardArchivePayload, parseAnyArchiveManifest, parseArchiveManifest } from "../persist/archiveMigrate";
 import { emptyEncounter, foldScenesIntoEncounters } from "../persist/foldScenes";
 import {
@@ -83,10 +84,12 @@ import {
   isSceneryToken,
   restoreAllNpcHp,
   scrubEntityFromBoard,
+  spawnBlockReason,
   stagingGroundAt,
   tokenFromEntity,
   withEncounterBlock,
   withTokenHpOwnership,
+  withUniquePlayerTokens,
 } from "../encounter";
 import {
   adjustActiveIndexForOrder,
@@ -1446,8 +1449,11 @@ export class HostStore {
 
   async placeCardOnBattleground(entityId: EntityId, at: { x: number; y: number } | null): Promise<void> {
     const entity = this.requireEntity(entityId);
-    if (isEncounterCard(entity)) {
-      this.setErrorAndThrow("Encounter cards cannot be added to an encounter");
+    // Never let a player card become a hand-placed figure: players join every
+    // encounter automatically and a second token would share the card's HP.
+    const blocked = spawnBlockReason(entity);
+    if (blocked !== null) {
+      this.setErrorAndThrow(blocked);
     }
     if (isMapCard(entity)) {
       const mediaId = mapMediaIdFromCard(entity);
@@ -1730,11 +1736,9 @@ export class HostStore {
 
   async addParticipant(entityId: EntityId): Promise<void> {
     const entity = this.requireEntity(entityId);
-    if (isEncounterCard(entity)) {
-      this.setErrorAndThrow("Encounter cards cannot be added to an encounter");
-    }
-    if (isPlayerCard(entity)) {
-      this.setErrorAndThrow("Player cards are included in every encounter automatically");
+    const blocked = spawnBlockReason(entity);
+    if (blocked !== null) {
+      this.setErrorAndThrow(blocked);
     }
     if (isMapCard(entity)) {
       await this.dropOnEncounter(entityId);
@@ -1831,11 +1835,9 @@ export class HostStore {
 
   async dropOnEncounter(entityId: EntityId): Promise<void> {
     const entity = this.requireEntity(entityId);
-    if (isEncounterCard(entity)) {
-      this.setErrorAndThrow("Encounter cards cannot be added to an encounter");
-    }
-    if (isPlayerCard(entity)) {
-      this.setErrorAndThrow("Player cards are included in every encounter automatically");
+    const blocked = spawnBlockReason(entity);
+    if (blocked !== null) {
+      this.setErrorAndThrow(blocked);
     }
     if (isMapCard(entity)) {
       const mediaId = mapMediaIdFromCard(entity);
@@ -2941,12 +2943,23 @@ export class HostStore {
   }
 
   private normalizeEncounter(encounter: EncounterState): EncounterState {
-    const filled = fillTokenCurrentHp(encounter, this.entities);
+    const unique = withUniquePlayerTokens(encounter, this.entities);
+    const filled = fillTokenCurrentHp(unique, this.entities);
     const withPlayers = ensurePlayerTokens(filled, this.entities, encounter.sessionId);
     if (withPlayers === encounter) {
       return encounter;
     }
     return { ...withPlayers, sessionId: encounter.sessionId };
+  }
+
+  /** Tidies a stored board on load: NPC instance HP, and one token per player. */
+  private repairStoredEncounter(encounter: EncounterState): EncounterState {
+    const unique = withUniquePlayerTokens(encounter, this.entities);
+    const filled = fillTokenCurrentHp(unique, this.entities);
+    if (filled === encounter) {
+      return encounter;
+    }
+    return { ...filled, sessionId: encounter.sessionId };
   }
 
   private async putEncounter(
@@ -3040,9 +3053,9 @@ export class HostStore {
       this.currentSessionId = asSessionId(metaSession);
       this.encounter = readEncounter(await db.get("encounters", this.currentSessionId), warnings);
       if (this.encounter !== null) {
-        const filled = fillTokenCurrentHp(this.encounter, this.entities);
-        if (filled !== this.encounter) {
-          this.encounter = { ...filled, sessionId: this.encounter.sessionId };
+        const repaired = this.repairStoredEncounter(this.encounter);
+        if (repaired !== this.encounter) {
+          this.encounter = repaired;
           await db.put("encounters", this.encounter);
         }
       }
@@ -3056,9 +3069,9 @@ export class HostStore {
       if (this.currentSessionId) {
         this.encounter = readEncounter(await db.get("encounters", this.currentSessionId), warnings);
         if (this.encounter !== null) {
-          const filled = fillTokenCurrentHp(this.encounter, this.entities);
-          if (filled !== this.encounter) {
-            this.encounter = { ...filled, sessionId: this.encounter.sessionId };
+          const repaired = this.repairStoredEncounter(this.encounter);
+          if (repaired !== this.encounter) {
+            this.encounter = repaired;
             await db.put("encounters", this.encounter);
           }
         }
@@ -3432,23 +3445,6 @@ function remapCardRefs(
     blocks.push(block);
   }
   return { ...card, blocks };
-}
-
-function isMapCard(entity: Entity): boolean {
-  if (isEncounterCard(entity)) {
-    return false;
-  }
-  if (entity.runCard.category === "Battlemap") {
-    return true;
-  }
-  if (
-    entity.runCard.tags.includes("image") ||
-    entity.runCard.tags.includes("map") ||
-    entity.runCard.tags.includes("battlemap")
-  ) {
-    return true;
-  }
-  return mediaFrom(entity.runCard, "map") !== null;
 }
 
 function mapMediaIdFromCard(entity: Entity): MediaId | null {

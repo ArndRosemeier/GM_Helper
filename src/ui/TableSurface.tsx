@@ -26,7 +26,7 @@ import {
   type StagingGround,
   type VeilKind,
 } from "../host/types";
-import { combatHpForToken, isNpcCard, isPlayerCard } from "../host/encounter";
+import { combatHpForToken, isEncounterCard, isNpcCard, isPlayerCard, spawnBlockReason } from "../host/encounter";
 import { activeInitiativeTokenId } from "../host/initiative";
 import { snapBoxToGrid } from "../host/gridSnap";
 import { useHost } from "../host/HostContext";
@@ -1920,16 +1920,35 @@ function BattlegroundCardPicker({
         {cards.length === 0 ? (
           <li className="muted">No cards in this campaign yet.</li>
         ) : (
-          cards.map((entity) => (
-            <li key={entity.id}>
-              <button type="button" onClick={() => onPick(entity.id)}>
-                <span>{entity.runCard.title}</span>
-                <em>
-                  {entity.runCard.category.length > 0 ? entity.runCard.category : "Uncategorized"}
-                </em>
-              </button>
-            </li>
-          ))
+          cards.map((entity) => {
+            const blocked = spawnBlockReason(entity);
+            const note =
+              blocked === null
+                ? entity.runCard.category.length > 0
+                  ? entity.runCard.category
+                  : "Uncategorized"
+                : isEncounterCard(entity)
+                  ? "Encounter card"
+                  : "Joins automatically";
+            if (blocked !== null) {
+              return (
+                <li key={entity.id}>
+                  <button type="button" className="is-not-placeable" disabled title={blocked}>
+                    <span>{entity.runCard.title}</span>
+                    <em>{note}</em>
+                  </button>
+                </li>
+              );
+            }
+            return (
+              <li key={entity.id}>
+                <button type="button" onClick={() => onPick(entity.id)}>
+                  <span>{entity.runCard.title}</span>
+                  <em>{note}</em>
+                </button>
+              </li>
+            );
+          })
         )}
       </ul>
       <div className="card-actions">

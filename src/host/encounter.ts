@@ -5,6 +5,7 @@ import {
   type EntityId,
   type MediaId,
   type SessionId,
+  type TokenId,
 } from "./ids";
 import { cloneTracks, combatStatsFrom, tracksFrom } from "./runCard";
 import {
@@ -93,6 +94,24 @@ export function isSceneryToken(token: BattlegroundToken): boolean {
 /** Portrait tokens linked to a card in this encounter. */
 export function cardTokens(board: EncounterBoard): BattlegroundToken[] {
   return board.tokens.filter((token) => token.entityId !== null);
+}
+
+/**
+ * Why a card may never be spawned on a board by hand, or null when it may.
+ *
+ * Players are not spawned by hand: they own their hit points on the card, so a
+ * second token for the same player would silently share them with the party
+ * token. They join every encounter automatically instead. NPC cards are
+ * templates and may be spawned as often as the table needs.
+ */
+export function spawnBlockReason(entity: Entity): string | null {
+  if (isEncounterCard(entity)) {
+    return "Encounter cards cannot be added to an encounter";
+  }
+  if (isPlayerCard(entity)) {
+    return `Player “${entity.runCard.title}” joins every encounter automatically`;
+  }
+  return null;
 }
 
 export type ResolvedCombatHp = {
@@ -228,6 +247,48 @@ export function restoreAllNpcHp(
     return board;
   }
   return { ...board, tokens };
+}
+
+/**
+ * Players are unique. Drop every extra token for the same player card, together
+ * with its initiative slots, so a hand-spawned duplicate cannot share the card's
+ * hit points with the party token any more.
+ */
+export function withUniquePlayerTokens(
+  board: EncounterBoard,
+  entities: ReadonlyArray<Entity>,
+): EncounterBoard {
+  const byId = new Map(entities.map((entity) => [entity.id, entity]));
+  const seen = new Set<EntityId>();
+  const dropped = new Set<TokenId>();
+  const tokens = board.tokens.filter((token) => {
+    if (token.entityId === null) {
+      return true;
+    }
+    const owner = byId.get(token.entityId);
+    if (owner === undefined || !isPlayerCard(owner)) {
+      return true;
+    }
+    if (seen.has(token.entityId)) {
+      dropped.add(token.id);
+      return false;
+    }
+    seen.add(token.entityId);
+    return true;
+  });
+  if (dropped.size === 0) {
+    return board;
+  }
+  const initiativeOrder = board.initiativeOrder.filter((id) => !dropped.has(id));
+  const activeId = board.initiativeOrder[board.activeIndex];
+  const activeIndex =
+    activeId === undefined ? 0 : Math.max(0, initiativeOrder.indexOf(activeId));
+  return {
+    ...board,
+    tokens,
+    initiativeOrder,
+    activeIndex: initiativeOrder.length === 0 ? 0 : activeIndex,
+  };
 }
 
 export function stagingGroundAt(
