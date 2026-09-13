@@ -1210,9 +1210,12 @@ export class HostStore {
         bytes: blob,
       };
       await this.putMedia(media);
+      const mapCategory = this.requireCampaign().cardCategories.includes("Battlemap")
+        ? "Battlemap"
+        : "";
       const entity = await this.createEntity(
         withMedia(
-          { title: `${session.title} map`, tags: ["image"], category: "", blocks: [] },
+          { title: `${session.title} map`, tags: ["image"], category: mapCategory, blocks: [] },
           { kind: "media", mediaId: media.id, role: "other" },
         ),
         "recurring",

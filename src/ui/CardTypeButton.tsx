@@ -38,7 +38,8 @@ export function CardTypeButton({
   const firstItemRef = useRef<HTMLButtonElement>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const categories = snap.campaign?.cardCategories ?? [];
-  const options = categories.length > 0 ? [...categories] : [""];
+  // No type to pick, no card: the menu never offers a nameless fallback.
+  const hasTypes = categories.length > 0;
 
   useEffect(() => {
     if (!open) {
@@ -100,16 +101,16 @@ export function CardTypeButton({
       <button
         type="button"
         ref={buttonRef}
-        disabled={disabled}
+        disabled={disabled || !hasTypes}
         aria-label={ariaLabel ?? label}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={title}
+        title={hasTypes ? title : "This campaign has no card types yet"}
         onClick={() => onOpenChange(!open)}
       >
         {label}
       </button>
-      {open && menuStyle !== null
+      {open && menuStyle !== null && hasTypes
         ? createPortal(
             <ul
               className="card-type-menu"
@@ -118,8 +119,8 @@ export function CardTypeButton({
               style={menuStyle}
               ref={menuRef}
             >
-              {options.map((category, index) => (
-                <li key={category.length > 0 ? category : "uncategorized"} role="none">
+              {categories.map((category, index) => (
+                <li key={category} role="none">
                   <button
                     type="button"
                     role="menuitem"
@@ -133,7 +134,7 @@ export function CardTypeButton({
                       className={`card-type-swatch is-${cardTypeForCategory(category)}`}
                       aria-hidden="true"
                     />
-                    {category.length > 0 ? category : "Uncategorized"}
+                    {category}
                   </button>
                 </li>
               ))}

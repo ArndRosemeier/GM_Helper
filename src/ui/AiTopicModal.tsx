@@ -36,7 +36,7 @@ export function AiTopicModal({
         onSubmit={(event) => {
           event.preventDefault();
           const trimmed = topic.trim();
-          if (trimmed.length === 0) {
+          if (trimmed.length === 0 || category.length === 0) {
             return;
           }
           onConfirm(trimmed, tryGetImage, category);
@@ -65,16 +65,20 @@ export function AiTopicModal({
         <label className="card-type-field">
           Card type
           <span className="card-type-choice">
-            <span
-              className={`card-type-swatch is-${cardTypeForCategory(category)}`}
-              aria-hidden="true"
-            />
+            {category.length > 0 ? (
+              <span
+                className={`card-type-swatch is-${cardTypeForCategory(category)}`}
+                aria-hidden="true"
+              />
+            ) : null}
             <select
               value={category}
               aria-label="Card type"
               onChange={(event) => setCategory(event.target.value)}
             >
-              <option value="">Uncategorized</option>
+              <option value="" disabled>
+                Choose a card type…
+              </option>
               {categories.map((entry) => (
                 <option key={entry} value={entry}>
                   {entry}
@@ -83,8 +87,14 @@ export function AiTopicModal({
             </select>
           </span>
         </label>
+        {categories.length === 0 ? (
+          <p className="muted">This campaign has no card types yet, so no card can be made.</p>
+        ) : null}
         <div className="card-actions">
-          <button type="submit" disabled={topic.trim().length === 0}>
+          <button
+            type="submit"
+            disabled={topic.trim().length === 0 || category.length === 0}
+          >
             Add card with AI
           </button>
           <button type="button" onClick={onCancel}>

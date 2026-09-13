@@ -330,6 +330,10 @@ export function EntityCard({
             {(snap.campaign?.cardCategories.length ?? 0) === 0 ? (
               <option value="">No categories</option>
             ) : null}
+            {entity.runCard.category.length === 0 &&
+            (snap.campaign?.cardCategories.length ?? 0) > 0 ? (
+              <option value="">Uncategorized</option>
+            ) : null}
             {entity.runCard.category.length > 0 &&
             !(snap.campaign?.cardCategories.includes(entity.runCard.category) ?? false) ? (
               <option value={entity.runCard.category}>{entity.runCard.category}</option>
