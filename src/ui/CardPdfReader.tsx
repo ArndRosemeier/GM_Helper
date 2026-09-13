@@ -69,7 +69,7 @@ export function CardPdfReader({
     return null;
   }
 
-  const confirmSave = (name: string): void => {
+  const confirmSave = (name: string, category: string): void => {
     if (pending === null) {
       store.setError("Nothing to save");
       return;
@@ -89,7 +89,7 @@ export function CardPdfReader({
             await document.getPage(pageNumber),
             image.objectName,
           );
-          await store.savePdfImageAsCard(picture, name);
+          await store.savePdfImageAsCard(picture, name, category);
         })(),
       );
       return;
@@ -102,7 +102,7 @@ export function CardPdfReader({
           pagePicture === null
             ? null
             : await extractPdfImagePng(await document.getPage(pageNumber), pagePicture.objectName);
-        await store.saveSourcePageAsCard(source.id, pageNumber, picture, name);
+        await store.saveSourcePageAsCard(source.id, pageNumber, picture, name, category);
       })(),
     );
   };
@@ -214,9 +214,11 @@ export function CardPdfReader({
         <AiTopicModal
           initialTopic={topic.trim()}
           onCancel={() => setAiTopicPending(false)}
-          onConfirm={(confirmedTopic, tryGetImage) => {
+          onConfirm={(confirmedTopic, tryGetImage, category) => {
             setAiTopicPending(false);
-            store.run(runAddCardWithAi(store, source.id, page, confirmedTopic, tryGetImage));
+            store.run(
+              runAddCardWithAi(store, source.id, page, confirmedTopic, tryGetImage, category),
+            );
           }}
         />
       ) : null}

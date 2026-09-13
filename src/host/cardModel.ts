@@ -1,6 +1,7 @@
 import { mediaFrom, provenanceFrom } from "./runCard";
 import type { SessionId, SourceId } from "./ids";
 import {
+  ENCOUNTER_CATEGORY,
   ENCOUNTER_TAG,
   NPC_CATEGORY,
   PLAYER_CATEGORY,
@@ -73,6 +74,23 @@ export function isMapCard(entity: Entity): boolean {
 
 export type CardType = "player" | "npc" | "map" | "encounter" | "misc";
 
+/** The kind a bare category name promises, for the type swatches in add menus. */
+export function cardTypeForCategory(category: string): CardType {
+  if (category === PLAYER_CATEGORY) {
+    return "player";
+  }
+  if (category === NPC_CATEGORY) {
+    return "npc";
+  }
+  if (category === "Battlemap") {
+    return "map";
+  }
+  if (category === ENCOUNTER_CATEGORY) {
+    return "encounter";
+  }
+  return "misc";
+}
+
 /**
  * Coarse card kind, for the tint and badge on every card face.
  *
@@ -83,14 +101,9 @@ export function cardTypeOf(entity: Entity): CardType {
   if (entity.runCard.tags.includes(ENCOUNTER_TAG)) {
     return "encounter";
   }
-  if (entity.runCard.category === PLAYER_CATEGORY) {
-    return "player";
+  const named = cardTypeForCategory(entity.runCard.category);
+  if (named !== "misc") {
+    return named;
   }
-  if (entity.runCard.category === NPC_CATEGORY) {
-    return "npc";
-  }
-  if (isMapCard(entity)) {
-    return "map";
-  }
-  return "misc";
+  return isMapCard(entity) ? "map" : "misc";
 }

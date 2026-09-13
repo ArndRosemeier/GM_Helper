@@ -159,24 +159,6 @@ export function SceneRail() {
       </form>
       <div className="add-heading">
         <h2>Add</h2>
-        <label className="add-category">
-          <span className="muted">Category</span>
-          <select
-            value={snap.addCategory}
-            aria-label="Category for new cards"
-            onChange={(event) => store.setAddCategory(event.target.value)}
-          >
-            {(snap.campaign?.cardCategories.length ?? 0) === 0 ? (
-              <option value="">No categories yet</option>
-            ) : (
-              snap.campaign?.cardCategories.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))
-            )}
-          </select>
-        </label>
       </div>
       <AddUrlEntity />
       <SomeoneHere />

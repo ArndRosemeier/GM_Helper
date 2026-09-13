@@ -97,7 +97,7 @@ export function SourceViewer() {
     return null;
   }
 
-  const confirmSave = (name: string): void => {
+  const confirmSave = (name: string, category: string): void => {
     if (!source || pending === null) {
       store.setError("Nothing to save");
       return;
@@ -114,7 +114,7 @@ export function SourceViewer() {
       store.run(
         (async () => {
           const picture = await extractPdfImagePng(await document.getPage(page), image.objectName);
-          await store.savePdfImageAsCard(picture, name);
+          await store.savePdfImageAsCard(picture, name, category);
         })(),
       );
       return;
@@ -134,17 +134,23 @@ export function SourceViewer() {
             await document.getPage(page),
             pagePicture.objectName,
           );
-          await store.saveSourcePageAsCard(source.id, page, picture, name);
+          await store.saveSourcePageAsCard(source.id, page, picture, name, category);
         })(),
       );
       return;
     }
     if (source.kind === "image" && source.bytes) {
-      store.run(store.saveSourcePageAsCard(source.id, null, source.bytes, name));
+      store.run(store.saveSourcePageAsCard(source.id, null, source.bytes, name, category));
       return;
     }
     store.run(
-      store.saveSourcePageAsCard(source.id, source.kind === "pdf" ? viewPage : null, null, name),
+      store.saveSourcePageAsCard(
+        source.id,
+        source.kind === "pdf" ? viewPage : null,
+        null,
+        name,
+        category,
+      ),
     );
   };
 
@@ -273,13 +279,13 @@ export function SourceViewer() {
         <AiTopicModal
           initialTopic={view?.searchQuery?.trim() ?? ""}
           onCancel={() => setTopicPending(false)}
-          onConfirm={(topic, tryGetImage) => {
+          onConfirm={(topic, tryGetImage, category) => {
             setTopicPending(false);
             if (!source || source.kind !== "pdf") {
               store.setError("AI card is only available for PDF sources");
               return;
             }
-            store.run(runAddCardWithAi(store, source.id, viewPage, topic, tryGetImage));
+            store.run(runAddCardWithAi(store, source.id, viewPage, topic, tryGetImage, category));
           }}
         />
       ) : null}

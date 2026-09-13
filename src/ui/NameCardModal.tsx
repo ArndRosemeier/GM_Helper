@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { cardTypeForCategory } from "../host/cardModel";
+import { useHost } from "../host/HostContext";
 import { Modal } from "./Modal";
 
 export function NameCardModal({
@@ -12,10 +14,13 @@ export function NameCardModal({
   fieldLabel: string;
   confirmLabel: string;
   onCancel: () => void;
-  onConfirm: (name: string) => void;
+  onConfirm: (name: string, category: string) => void;
 }) {
+  const { snap } = useHost();
   const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const categories = snap.campaign?.cardCategories ?? [];
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -36,7 +41,7 @@ export function NameCardModal({
           if (trimmed.length === 0) {
             return;
           }
-          onConfirm(trimmed);
+          onConfirm(trimmed, category);
         }}
       >
         <p className="eyebrow">New card</p>
@@ -50,6 +55,27 @@ export function NameCardModal({
             autoComplete="off"
             aria-label={fieldLabel}
           />
+        </label>
+        <label className="card-type-field">
+          Card type
+          <span className="card-type-choice">
+            <span
+              className={`card-type-swatch is-${cardTypeForCategory(category)}`}
+              aria-hidden="true"
+            />
+            <select
+              value={category}
+              aria-label="Card type"
+              onChange={(event) => setCategory(event.target.value)}
+            >
+              <option value="">Uncategorized</option>
+              {categories.map((entry) => (
+                <option key={entry} value={entry}>
+                  {entry}
+                </option>
+              ))}
+            </select>
+          </span>
         </label>
         <div className="card-actions">
           <button type="submit" disabled={name.trim().length === 0}>

@@ -212,8 +212,6 @@ export type HostSnapshot = {
   busy: BusyStatus | null;
   /** Category names selected in the card filter bar. */
   categoryFilters: ReadonlyArray<string>;
-  /** Category applied to newly created cards. */
-  addCategory: string;
 };
 
 const META_CAMPAIGN = "currentCampaignId";
@@ -253,7 +251,6 @@ export class HostStore {
   private snapshot: HostSnapshot = this.createSnapshot();
   private booting: Promise<void> | null = null;
   private categoryFilters: string[] = [];
-  private addCategory = "";
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -482,14 +479,14 @@ export class HostStore {
     return this.insertEntity(runCard, lifecycle);
   }
 
-  async createEntityFromUrl(raw: string, title = ""): Promise<Entity> {
+  async createEntityFromUrl(raw: string, title = "", category = ""): Promise<Entity> {
     const url = parseEntityUrl(raw);
     const href = url.toString();
     const source = await this.ensureWebSource();
     const cardTitle = title.trim().length > 0 ? title.trim() : titleFromEntityUrl(url);
     const entity = await this.createEntity(
       withProvenance(
-        withText({ title: cardTitle, tags: ["web"], category: "", blocks: [] }, href),
+        withText({ title: cardTitle, tags: ["web"], category, blocks: [] }, href),
         {
           kind: "provenance",
           sourceId: source.id,
@@ -865,6 +862,7 @@ export class HostStore {
     page: number | null,
     picture: Blob | null,
     titleRaw: string,
+    category = "",
   ): Promise<Entity> {
     const title = titleRaw.trim();
     if (title.length === 0) {
@@ -883,8 +881,8 @@ export class HostStore {
     const tags = source.kind === "pdf" || source.kind === "image" ? [source.kind] : [];
     let card = withProvenance(
       text.length > 0
-        ? withText({ title, tags, category: "", blocks: [] }, text)
-        : { title, tags, category: "", blocks: [] },
+        ? withText({ title, tags, category, blocks: [] }, text)
+        : { title, tags, category, blocks: [] },
       {
         kind: "provenance",
         sourceId,
@@ -912,7 +910,7 @@ export class HostStore {
     return entity;
   }
 
-  async savePdfImageAsCard(picture: Blob, titleRaw: string): Promise<Entity> {
+  async savePdfImageAsCard(picture: Blob, titleRaw: string, category = ""): Promise<Entity> {
     const title = titleRaw.trim();
     if (title.length === 0) {
       this.setErrorAndThrow("Card name is empty");
@@ -926,7 +924,7 @@ export class HostStore {
     };
     await this.putMedia(media);
     // Free-text card: picture only, no PDF provenance / pdf tag.
-    const card = withMedia(emptyRunCard(title), {
+    const card = withMedia(emptyRunCard(title, [], category), {
       kind: "media",
       mediaId: media.id,
       role: "other",
@@ -939,9 +937,9 @@ export class HostStore {
     return entity;
   }
 
-  async saveChunkAsCard(chunkId: ChunkId): Promise<Entity> {
+  async saveChunkAsCard(chunkId: ChunkId, category = ""): Promise<Entity> {
     const chunk = this.requireChunk(chunkId);
-    return this.saveSourcePageAsCard(chunk.sourceId, chunk.page, null, chunk.heading);
+    return this.saveSourcePageAsCard(chunk.sourceId, chunk.page, null, chunk.heading, category);
   }
 
   async chatModelAcceptsImages(): Promise<boolean> {
@@ -953,6 +951,7 @@ export class HostStore {
     pageNumber: number,
     topicRaw: string,
     tryGetImage: boolean,
+    category = "",
   ): Promise<Entity> {
     const topic = topicRaw.trim();
     if (topic.length === 0) {
@@ -1044,7 +1043,7 @@ export class HostStore {
         userMessage,
       ]);
       const result = parseAiTopicCard(raw, chatImages.length);
-      let card = withText(emptyRunCard(result.title), result.text);
+      let card = withText(emptyRunCard(result.title, [], category), result.text);
       if (result.selectedImageIndex !== null) {
         const picture = chatImages[result.selectedImageIndex]?.original;
         if (!picture) {
@@ -2859,8 +2858,9 @@ export class HostStore {
 
 
   private async insertEntity(runCard: RunCard, lifecycle: Entity["lifecycle"]): Promise<Entity> {
-    const category =
-      runCard.category.trim().length > 0 ? runCard.category.trim() : this.addCategory.trim();
+    // The category is decided by whoever asks for the card, never inherited from
+    // a global setting: an add button picks the type as it creates the card.
+    const category = runCard.category.trim();
     const entity: Entity = {
       id: newEntityId(),
       campaignId: this.requireCampaignId(),
@@ -3123,21 +3123,6 @@ export class HostStore {
     const campaign = this.campaigns.find((item) => item.id === this.currentCampaignId);
     const categories = campaign?.cardCategories ?? [];
     this.categoryFilters = [...categories];
-    if (this.addCategory.length > 0 && !categories.includes(this.addCategory)) {
-      this.addCategory = categories[0] ?? "";
-    }
-    if (this.addCategory.length === 0 && categories.length > 0) {
-      this.addCategory = categories[0] ?? "";
-    }
-  }
-
-  setAddCategory(category: string): void {
-    const campaign = this.requireCampaign();
-    if (category.length > 0 && !campaign.cardCategories.includes(category)) {
-      this.setErrorAndThrow(`Unknown category “${category}”`);
-    }
-    this.addCategory = category;
-    this.emit();
   }
 
   async createCardCategory(raw: string): Promise<void> {
@@ -3156,7 +3141,6 @@ export class HostStore {
     await this.requireDb().put("campaigns", next);
     this.markDirty();
     this.campaigns = this.campaigns.map((item) => (item.id === next.id ? next : item));
-    this.addCategory = name;
     if (!this.categoryFilters.includes(name)) {
       this.categoryFilters = [...this.categoryFilters, name];
     }
@@ -3395,7 +3379,6 @@ export class HostStore {
       urlView: this.urlView,
       busy: this.busy,
       categoryFilters: this.categoryFilters,
-      addCategory: this.addCategory,
     };
   }
 

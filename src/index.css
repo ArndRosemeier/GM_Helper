@@ -253,8 +253,22 @@ h3 {
 
 /*
  * Card faces carry their type: a tint plus a colored left edge. An accidental
- * category (a mob filed as a Player, say) is then obvious at a glance.
+ * category (a mob filed as a Player, say) is then obvious at a glance. The
+ * palette lives here once, so the type menus reuse the same colors.
  */
+:root {
+  --type-player-edge: rgb(20 235 105 / 0.6);
+  --type-player-tint: rgb(20 235 105 / 0.1);
+  --type-npc-edge: rgb(255 40 45 / 0.6);
+  --type-npc-tint: rgb(255 40 45 / 0.1);
+  --type-map-edge: rgb(96 168 255 / 0.55);
+  --type-map-tint: rgb(96 168 255 / 0.1);
+  --type-encounter-edge: rgb(212 164 90 / 0.7);
+  --type-encounter-tint: rgb(212 164 90 / 0.12);
+  --type-misc-edge: rgb(255 255 255 / 0.16);
+  --type-misc-tint: rgb(255 255 255 / 0.02);
+}
+
 .card-type-player,
 .card-type-npc,
 .card-type-map,
@@ -265,28 +279,96 @@ h3 {
 }
 
 .card-type-player {
-  --card-type-tint: rgb(20 235 105 / 0.1);
-  --card-type-edge: rgb(20 235 105 / 0.6);
+  --card-type-tint: var(--type-player-tint);
+  --card-type-edge: var(--type-player-edge);
 }
 
 .card-type-npc {
-  --card-type-tint: rgb(255 40 45 / 0.1);
-  --card-type-edge: rgb(255 40 45 / 0.6);
+  --card-type-tint: var(--type-npc-tint);
+  --card-type-edge: var(--type-npc-edge);
 }
 
 .card-type-map {
-  --card-type-tint: rgb(96 168 255 / 0.1);
-  --card-type-edge: rgb(96 168 255 / 0.55);
+  --card-type-tint: var(--type-map-tint);
+  --card-type-edge: var(--type-map-edge);
 }
 
 .card-type-encounter {
-  --card-type-tint: rgb(212 164 90 / 0.12);
-  --card-type-edge: rgb(212 164 90 / 0.7);
+  --card-type-tint: var(--type-encounter-tint);
+  --card-type-edge: var(--type-encounter-edge);
 }
 
 .card-type-misc {
-  --card-type-tint: rgb(255 255 255 / 0.02);
-  --card-type-edge: rgb(255 255 255 / 0.16);
+  --card-type-tint: var(--type-misc-tint);
+  --card-type-edge: var(--type-misc-edge);
+}
+
+/* The add buttons ask for the type as they are pressed. */
+.card-type-button {
+  position: relative;
+  flex: none;
+}
+
+.card-type-menu {
+  position: fixed;
+  z-index: 60;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: 60vh;
+  overflow: auto;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.card-type-menu li {
+  margin: 0;
+}
+
+.card-type-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-type-menu button:hover,
+.card-type-menu button:focus-visible {
+  background: #3a2f24;
+}
+
+.card-type-swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  border: 1px solid rgb(0 0 0 / 0.4);
+  background: var(--type-misc-edge);
+}
+
+.card-type-swatch.is-player {
+  background: var(--type-player-edge);
+}
+
+.card-type-swatch.is-npc {
+  background: var(--type-npc-edge);
+}
+
+.card-type-swatch.is-map {
+  background: var(--type-map-edge);
+}
+
+.card-type-swatch.is-encounter {
+  background: var(--type-encounter-edge);
 }
 
 .empty-card {
@@ -354,17 +436,6 @@ h3 {
 
 .add-heading h2 {
   margin: 0;
-}
-
-.add-category {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  margin: 0;
-}
-
-.add-category select {
-  min-width: 7rem;
 }
 
 .focus-card.compact {
@@ -1294,6 +1365,18 @@ h3 {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Card type next to the name, so the type is decided as the card is created. */
+.card-type-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-type-choice select {
+  flex: 1;
+  min-width: 0;
 }
 
 .ai-topic-checkbox input[type="checkbox"] {

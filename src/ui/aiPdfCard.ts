@@ -7,6 +7,7 @@ export async function runAddCardWithAi(
   page: number,
   topic: string,
   tryGetImage: boolean,
+  category = "",
 ): Promise<void> {
-  await store.generateAiCardFromPdfPage(sourceId, page, topic, tryGetImage);
+  await store.generateAiCardFromPdfPage(sourceId, page, topic, tryGetImage, category);
 }

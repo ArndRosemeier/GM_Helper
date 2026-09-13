@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { cardTypeForCategory } from "../host/cardModel";
+import { useHost } from "../host/HostContext";
 import { Modal } from "./Modal";
 
 export function AiTopicModal({
@@ -8,11 +10,14 @@ export function AiTopicModal({
 }: {
   initialTopic: string;
   onCancel: () => void;
-  onConfirm: (topic: string, tryGetImage: boolean) => void;
+  onConfirm: (topic: string, tryGetImage: boolean, category: string) => void;
 }) {
+  const { snap } = useHost();
   const [topic, setTopic] = useState(initialTopic);
   const [tryGetImage, setTryGetImage] = useState(true);
+  const [category, setCategory] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const categories = snap.campaign?.cardCategories ?? [];
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -34,7 +39,7 @@ export function AiTopicModal({
           if (trimmed.length === 0) {
             return;
           }
-          onConfirm(trimmed, tryGetImage);
+          onConfirm(trimmed, tryGetImage, category);
         }}
       >
         <p className="eyebrow">AI card</p>
@@ -56,6 +61,27 @@ export function AiTopicModal({
             onChange={(event) => setTryGetImage(event.target.checked)}
           />
           Try to get fitting image from document
+        </label>
+        <label className="card-type-field">
+          Card type
+          <span className="card-type-choice">
+            <span
+              className={`card-type-swatch is-${cardTypeForCategory(category)}`}
+              aria-hidden="true"
+            />
+            <select
+              value={category}
+              aria-label="Card type"
+              onChange={(event) => setCategory(event.target.value)}
+            >
+              <option value="">Uncategorized</option>
+              {categories.map((entry) => (
+                <option key={entry} value={entry}>
+                  {entry}
+                </option>
+              ))}
+            </select>
+          </span>
         </label>
         <div className="card-actions">
           <button type="submit" disabled={topic.trim().length === 0}>
